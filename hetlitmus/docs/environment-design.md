@@ -136,6 +136,9 @@ configuration index. A configuration whose grid is not the one drawn is killed a
 not being what was drawn. A run the outcome rule discards, or one over the discard budget, leaves
 the ranking, so the search cannot win by killing a mechanism. Nothing transfers: parameters for
 one chip may not be optimal on another, even from the same vendor [Kirkham20 sec 6.4].
+Interconnect noise is off, in the harness defaults and in the search: its effect on how often a
+weak outcome appears is unmeasured, and its threads and blocks come out of the stress pool, so a
+joint draw spends a limited hardware budget on an untested setting; measuring it is future work.
 
 ## Hardware-only constraints
 

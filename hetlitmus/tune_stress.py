@@ -75,9 +75,9 @@ MAX_ATTEMPTS = 16
 
 STRESS_BLOCK_SET = (0, 1, 2, 4, 8, 16, 32, 64)
 CPU_WORDS_PER_REGION_SET = (8, 16, 32, 64, 128, 256)
-NOISE_BLOCK_SET = (0, 1, 2, 4, 8, 16)
-CPU_NOISE_THREAD_SET = (0, 1, 2, 4, 8, 16, 32)   # environment-design.md "Tuning"
-NOISE_STRIDE_SET = (1, 8, 32)
+# Interconnect noise is not drawn: hetlitmus/docs/environment-design.md "Tuning".
+# For the interconnect noise logic before its removal, see
+# git show 1f7a5e9f9b5d:hetlitmus/tune_stress.py
 CPU_STRESS_THREADS_MAX = 12
 
 # Every knob the search turns, in one joint draw.  Order is the stream: a knob
@@ -88,8 +88,6 @@ KNOBS = ("HET_GPU_MEM_STRESS_PCT", "HET_GPU_MEM_STRESS_ROUNDS", "HET_GPU_MEM_STR
          "HET_BLOCK_DIM", "HET_GPU_STRESS_BLOCKS",
          "HET_CPU_STRESS_THREADS", "HET_CPU_SCRATCH_WORDS", "HET_CPU_SPREAD",
          "HET_CPU_WORDS_PER_REGION", "HET_CPU_STRESS_PATTERN", "HET_CPU_PRELOAD_PCT",
-         "HET_GPU_NOISE_BLOCKS", "HET_CPU_NOISE_THREADS", "HET_NOISE_MB",
-         "HET_NOISE_STRIDE",
          "HET_GPU_SCRATCH_WORDS")           # derived, never drawn
 
 
@@ -106,10 +104,8 @@ def draw_knobs(seed, i, env, attempt):
     lo = env.block_dim_lo
     bdim = lo + 2 * (d(18) % ((256 - lo) // 2 + 1))
     blocks = -1 if d(20) % 2 == 0 else STRESS_BLOCK_SET[d(21) % len(STRESS_BLOCK_SET)]
-    nt_set = [n for n in CPU_NOISE_THREAD_SET if n <= max(0, env.spare_cores)]
-    noise_threads = nt_set[d(36) % len(nt_set)]
     # -1 = auto and 0 = none are distinct requests, so both sit in the one set.
-    e_hi = min(CPU_STRESS_THREADS_MAX, max(0, env.spare_cores - noise_threads))
+    e_hi = min(CPU_STRESS_THREADS_MAX, max(0, env.spare_cores))
     e_pick = d(22) % (e_hi + 2)
     stress_threads = -1 if e_pick == 0 else e_pick - 1
     k = {
@@ -130,10 +126,6 @@ def draw_knobs(seed, i, env, attempt):
         "HET_CPU_WORDS_PER_REGION": CPU_WORDS_PER_REGION_SET[d(28) % len(CPU_WORDS_PER_REGION_SET)],
         "HET_CPU_STRESS_PATTERN": d(30) % 4,
         "HET_CPU_PRELOAD_PCT": d(32) % 101,
-        "HET_GPU_NOISE_BLOCKS": NOISE_BLOCK_SET[d(34) % len(NOISE_BLOCK_SET)],
-        "HET_CPU_NOISE_THREADS": noise_threads,
-        "HET_NOISE_MB": env.noise_mb_set[d(38) % len(env.noise_mb_set)],
-        "HET_NOISE_STRIDE": NOISE_STRIDE_SET[d(40) % len(NOISE_STRIDE_SET)],
         # [CudaLitmus] derivation
         "HET_GPU_SCRATCH_WORDS": 32 * line * targets,
     }
@@ -150,11 +142,9 @@ def violated(k, env):
         return "mem-stress asked for with an explicit zero stress-block population"
     n = k["HET_CPU_STRESS_THREADS"]
     if n < 0:
-        n = max(0, env.ncores - env.cpu_test - k["HET_CPU_NOISE_THREADS"] - env.reserve)
-    if n + k["HET_CPU_NOISE_THREADS"] + env.cpu_test + env.reserve > env.ncores:
-        return "stress threads + noise threads + test threads + reserve exceed %d core(s)" % env.ncores
-    if k["HET_NOISE_MB"] < 2 * env.llc_mb:
-        return "noise working set is below 2 x the last-level cache"
+        n = max(0, env.ncores - env.cpu_test - env.reserve)
+    if n + env.cpu_test + env.reserve > env.ncores:
+        return "stress threads + test threads + reserve exceed %d core(s)" % env.ncores
     return None
 
 
@@ -205,17 +195,6 @@ def named_tests(path):
     if not uniq:
         die("--tests %s names no test" % path)
     return uniq
-
-
-def mem_available_mb():
-    try:
-        with open("/proc/meminfo") as fh:
-            for line in fh:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) // 1024
-    except (IOError, OSError, ValueError, IndexError):
-        pass
-    return 0
 
 
 def probe(a, tests):
@@ -272,16 +251,6 @@ def probe(a, tests):
 
     env.ncores = os.cpu_count() or 1
     env.spare_cores = env.ncores - env.reserve - env.cpu_test
-    env.llc_mb = a.llc_mb if a.llc_mb else header_define(CPU_STRESS_H, "HET_LLC_MB")
-    # One noise buffer per run, in system memory: what is available is the
-    # ceiling one may ask for.
-    cap = max(1, mem_available_mb())
-    wanted = sorted(set([2 * env.llc_mb, 4 * env.llc_mb, 8 * env.llc_mb, 8192]))
-    env.noise_mb_set = tuple(v for v in wanted if v <= cap)
-    if not env.noise_mb_set:
-        die("no noise working set above 2 x %d MB fits the %d MB this machine "
-            "reports available: the interconnect noise cannot be drawn here"
-            % (env.llc_mb, mem_available_mb()))
     return env
 
 
@@ -294,11 +263,8 @@ def build(a, env, k, timeout):
     ride the compiler variable, which make expands into the command line."""
     e = dict(os.environ)
     e["RESULTS"] = a.out
-    flags = dflags(k)
-    if a.llc_mb:
-        flags = flags + ["-DHET_LLC_MB=%d" % a.llc_mb]
     e[env.compiler_var] = "%s %s" % (e.get(env.compiler_var) or env.compiler,
-                                     " ".join(flags))
+                                     " ".join(dflags(k)))
     cmd = [BUILD_SH, env.emit, "--tests", os.path.abspath(a.tests),
            "-j", str(a.jobs)]
     if a.arch:
@@ -580,13 +546,10 @@ def search(a):
         log.emit({"type": "meta", "seed": a.seed, "iters": a.iters,
                   "target": a.target, "vendor": env.vendor, "arch": a.arch or "",
                   "emit_dir": env.emit, "tests": tests,
-                  "llc_mb": env.llc_mb, "cores": env.ncores,
-                  "noise_mb_set": list(env.noise_mb_set),
+                  "cores": env.ncores,
                   "block_dim_lo": env.block_dim_lo})
-    print("tune_stress: seed=%d target=%s %s %d row(s), %d core(s), "
-          "noise set %s MB"
-          % (a.seed, a.target, env.vendor, len(tests), env.ncores,
-             ",".join(str(v) for v in env.noise_mb_set)))
+    print("tune_stress: seed=%d target=%s %s %d row(s), %d core(s)"
+          % (a.seed, a.target, env.vendor, len(tests), env.ncores))
     try:
         while a.configs == 0 or scored < a.configs:
             k = draw_config(a.seed, i, env)
@@ -662,10 +625,12 @@ def rank(a):
              if r.get("type") == "config" and "drawn" in r}
     for i in sorted(wins):
         missing = [n for n in KNOBS if n not in drawn.get(i, {})]
-        if missing:
-            die("%s: configuration %d was drawn without %s -- a log from another "
+        unknown = [n for n in drawn.get(i, {}) if n not in KNOBS]
+        if missing or unknown:
+            die("%s: configuration %d was drawn %s -- a log from another "
                 "knob set; rank it with the tune_stress.py that wrote it"
-                % (os.path.join(a.out, LOG_NAME), i, ", ".join(missing)))
+                % (os.path.join(a.out, LOG_NAME), i,
+                   "without " + ", ".join(missing) if missing else "with " + ", ".join(unknown)))
     for i in sorted(wins):
         out = os.path.join(a.out, "winner-%d.params" % i)
         with open(out, "w") as fh:
@@ -688,9 +653,6 @@ def add_build_args(p):
     p.add_argument("--arch", default="",
                    help="device arch, as build.sh takes it; the default is the "
                         "probe record build.sh reads from --out")
-    p.add_argument("--llc-mb", type=int, default=0,
-                   help="last-level cache on the path, in MB; the noise draw is "
-                        "built from it, and it is compiled in when given")
     p.add_argument("--cap-cpu", type=int, default=0, help="HET_CAP_CPU per run")
     p.add_argument("--cap-gpu", type=int, default=0, help="HET_CAP_GPU per run")
     p.add_argument("--timeout", type=int, default=900,

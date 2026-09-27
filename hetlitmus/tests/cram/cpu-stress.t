@@ -120,7 +120,11 @@ one subtracted from the stress-thread budget.
   1
   $ grep -c 'for (int _t = 0; _t < HET_CPU_NOISE_THREADS; ++_t) {' $MP.cu
   1
-  $ grep -A1 '#ifndef HET_CPU_NOISE_THREADS' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_CPU_NOISE_THREADS 1'
+
+Both noise halves are off unless the build asks for them.
+  $ grep -A1 '#ifndef HET_CPU_NOISE_THREADS' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_CPU_NOISE_THREADS 0'
+  1
+  $ grep -A1 '#ifndef HET_GPU_NOISE_BLOCKS' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_GPU_NOISE_BLOCKS 0'
   1
 
 The working set is derived from HET_NOISE_MB and guarded against the last-level

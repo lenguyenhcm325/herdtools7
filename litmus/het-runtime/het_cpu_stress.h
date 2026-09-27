@@ -49,16 +49,17 @@ extern "C" {
 #define HET_CPU_RESERVE_CORES 2   /* cores left unpinned for the OS and the driver */
 #endif
 
-/* Half 2 knobs -- interconnect: the noise knobs, consumed on both sides. */
+/* Half 2 knobs -- interconnect: the noise knobs, consumed on both sides.  Both
+ * halves default to off: hetlitmus/docs/environment-design.md "Tuning". */
 #ifndef HET_NOISE_MB
 #define HET_NOISE_MB 8192         /* the noise buffer [Fusco24 sec III-C]; it must
                                      EXCEED the last-level cache (HET_LLC_MB)   */
 #endif
 #ifndef HET_CPU_NOISE_THREADS
-#define HET_CPU_NOISE_THREADS 1   /* host half: threads, one slice of the buffer each */
+#define HET_CPU_NOISE_THREADS 0   /* host half: threads, one slice of the buffer each */
 #endif
 #ifndef HET_GPU_NOISE_BLOCKS
-#define HET_GPU_NOISE_BLOCKS 8    /* device half: extra blocks of the PERSISTENT grid */
+#define HET_GPU_NOISE_BLOCKS 0    /* device half: extra blocks of the PERSISTENT grid */
 #endif
 #ifndef HET_NOISE_WORDS_PER_ROUND
 #define HET_NOISE_WORDS_PER_ROUND 4096  /* words streamed between stop-flag checks */
