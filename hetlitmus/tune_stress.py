@@ -509,6 +509,19 @@ def log_meta(rows):
     die("the log carries no meta line, so it names no target or seed")
 
 
+def check_knob_set(path, i, k, verb):
+    """Die unless configuration i was drawn over exactly KNOBS: a log from
+    another knob set is neither ranked nor continued here."""
+    missing = [n for n in KNOBS if n not in k]
+    unknown = [n for n in k if n not in KNOBS]
+    if missing or unknown:
+        die("%s: configuration %d was drawn %s -- a log from another "
+            "knob set; %s it with the tune_stress.py that wrote it"
+            % (path, i,
+               "without " + ", ".join(missing) if missing else "with " + ", ".join(unknown),
+               verb))
+
+
 # ---------------------------------------------------------------------------
 # Passes.
 # ---------------------------------------------------------------------------
@@ -535,6 +548,8 @@ def search(a):
                 % (path, meta["seed"], meta["iters"], a.seed, a.iters))
         for r in rows:
             if r.get("type") == "config":
+                if "drawn" in r:
+                    check_knob_set(path, r["i"], r["drawn"], "resume")
                 i = max(i, r["i"] + 1)
                 if r["status"] == "scored":
                     scored += 1
@@ -624,13 +639,7 @@ def rank(a):
     drawn = {r["i"]: r["drawn"] for r in rows
              if r.get("type") == "config" and "drawn" in r}
     for i in sorted(wins):
-        missing = [n for n in KNOBS if n not in drawn.get(i, {})]
-        unknown = [n for n in drawn.get(i, {}) if n not in KNOBS]
-        if missing or unknown:
-            die("%s: configuration %d was drawn %s -- a log from another "
-                "knob set; rank it with the tune_stress.py that wrote it"
-                % (os.path.join(a.out, LOG_NAME), i,
-                   "without " + ", ".join(missing) if missing else "with " + ", ".join(unknown)))
+        check_knob_set(os.path.join(a.out, LOG_NAME), i, drawn.get(i, {}), "rank")
     for i in sorted(wins):
         out = os.path.join(a.out, "winner-%d.params" % i)
         with open(out, "w") as fh:
