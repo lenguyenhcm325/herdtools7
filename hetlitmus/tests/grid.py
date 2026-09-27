@@ -152,14 +152,14 @@ def render_cpu_x86_64(order, cycle):
 
 
 # One profile per CPU ISA: the -cpu-arch tag hetgen7 takes, the file-name
-# suffix, the CPU-order list and the renderer.  A new ISA is one row + one
-# renderer.
+# suffix, the CPU-order list, the order with a full barrier on every Po edge
+# and the renderer.  A new ISA is one row + one renderer.
 CPU_ISAS = {
     "aarch64": {"tag": "aarch64", "suffix": "",
-                "orders": ["plain", "ra", "sy", "st", "ld"],
+                "orders": ["plain", "ra", "sy", "st", "ld"], "barrier": "sy",
                 "render": render_cpu_aarch64},
     "x86_64":  {"tag": "x86_64", "suffix": "-x86_64",
-                "orders": ["plain", "mf"],
+                "orders": ["plain", "mf"], "barrier": "mf",
                 "render": render_cpu_x86_64},
 }
 
@@ -253,30 +253,40 @@ def run_tool(name, path, args, cwd=None):
     return r.stdout
 
 
+def het_name(isa, shape, tag, scope, cpu, gpu):
+    return "%s-%s-%s-%s.%s%s" % (shape, tag, scope, cpu, gpu,
+                                 CPU_ISAS[isa]["suffix"])
+
+
+def het_cells(isa):
+    """Every het cell as (shape, cycle, cut tag, scope, cpu, gpu), in the
+    generation order that decides which name survives the byte-dedup."""
+    for shape, cycle in SHAPES:
+        for tag in cut_classes(cycle):
+            for scope in SCOPES:
+                for cpu in CPU_ISAS[isa]["orders"]:
+                    if cpu != "plain" and scope != "sys":
+                        continue
+                    for gpu in GPU_ORDERS:
+                        yield shape, cycle, tag, scope, cpu, gpu
+
+
 def gen_het(a):
     isa = CPU_ISAS[a.cpu_arch]
     common = ["-set-libdir", a.libdir, "-bell", a.bell, "-oneloc",
               "-cpu-arch", isa["tag"]]
-    names, classes = [], []
-    for shape, cycle in SHAPES:
-        tags = cut_classes(cycle)
-        classes.append("%s %d" % (shape, len(tags)))
-        for tag in tags:
-            for scope in SCOPES:
-                for cpu in isa["orders"]:
-                    if cpu != "plain" and scope != "sys":
-                        continue
-                    cpu_toks = render_cpu(a.cpu_arch, cpu, cycle)
-                    for gpu in GPU_ORDERS:
-                        name = "%s-%s-%s-%s.%s%s" % (shape, tag, scope, cpu,
-                                                     gpu, isa["suffix"])
-                        text = run_tool("hetgen7", a.hetgen7, common + [
-                            "-devices", cut_devices(tag), "-name", name,
-                            "-cpu", cpu_toks,
-                            "-gpu", render_gpu(scope, gpu, cycle)])
-                        with open(os.path.join(a.out, name + ".litmus"), "wb") as f:
-                            f.write(text)
-                        names.append(name)
+    names = []
+    classes = ["%s %d" % (shape, len(cut_classes(cycle)))
+               for shape, cycle in SHAPES]
+    for shape, cycle, tag, scope, cpu, gpu in het_cells(a.cpu_arch):
+        name = het_name(a.cpu_arch, shape, tag, scope, cpu, gpu)
+        text = run_tool("hetgen7", a.hetgen7, common + [
+            "-devices", cut_devices(tag), "-name", name,
+            "-cpu", render_cpu(a.cpu_arch, cpu, cycle),
+            "-gpu", render_gpu(scope, gpu, cycle)])
+        with open(os.path.join(a.out, name + ".litmus"), "wb") as f:
+            f.write(text)
+        names.append(name)
     return names, classes
 
 
@@ -307,18 +317,20 @@ def body_key(path):
 
 
 def dedup(out, names):
-    """Delete every test whose body equals an earlier one's; -> survivors."""
-    survivor, kept = {}, []
+    """Delete every test whose body equals an earlier one's; -> survivors and
+    the list of (dropped name, survivor)."""
+    survivor, kept, dropped = {}, [], []
     for name in names:
         path = os.path.join(out, name + ".litmus")
         key = body_key(path)
         if key in survivor:
             os.remove(path)
             print("skip %s: == %s" % (name, survivor[key]))
+            dropped.append((name, survivor[key]))
         else:
             survivor[key] = name
             kept.append(name)
-    return kept
+    return kept, dropped
 
 
 def main(argv=None):
@@ -352,15 +364,18 @@ def main(argv=None):
     else:
         a.diyone7 = os.path.abspath(tool)
     os.makedirs(a.out, exist_ok=True)
-    stale = [f for f in os.listdir(a.out) if f.endswith(".litmus") or f == "@all"]
+    stale = [f for f in os.listdir(a.out)
+             if f.endswith(".litmus") or f in ("@all", "@dedup")]
     if stale:
         ap.error("--out %s already holds %d test file(s); name an empty directory"
                  % (a.out, len(stale)))
 
     names, classes = gen_het(a) if a.corpus == "het" else gen_gpu_only(a)
-    kept = dedup(a.out, names)
+    kept, dropped = dedup(a.out, names)
     with open(os.path.join(a.out, "@all"), "w") as f:
         f.write("".join(n + "\n" for n in sorted(k + ".litmus" for k in kept)))
+    with open(os.path.join(a.out, "@dedup"), "w") as f:
+        f.write("".join("%s %s\n" % d for d in dropped))
     label = a.corpus if a.corpus == "gpu-only" else "het %s" % a.cpu_arch
     census = "%s: %d tests written, %d dropped" % (label, len(kept),
                                                     len(names) - len(kept))

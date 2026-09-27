@@ -74,3 +74,20 @@ frontend therefore needs scoped loads and stores, no RMW, and the intermediate
 scope `gpu` the artifact does not use; beyond the artifact the bell declares
 `sc` and the standalone fences the grid's orders use, over the idioms of
 `herd/libdir/c11.bell` and `catalogue/tutorial/bells/jaguar.bell`.
+
+## Device-run subset
+
+A device run takes a subset of the het tree, chosen by coverage.
+
+| Part | Chosen tests |
+|---|---|
+| unordered end | every experiment (shape x cut) at `sys-plain.rlx` |
+| fenced end | every experiment at the ISA's full barrier against `fsc`, or that cell's dedup survivor |
+| full grid | every cell of MP, SB, LB, CoRR, CoWR and CoRW2 |
+
+Every shape runs under every device assignment twice: with no ordering, and
+with a fence on every program-order edge of both devices. Six shapes run their
+full grid, so two tests that differ only in scope, CPU order or GPU order can be
+compared. MP, SB and LB between them give each device every access pair on two
+locations (write-write, read-read, write-read, read-write), and CoRR, CoWR and
+CoRW2 every pair on one location (read-read, write-read, read-write).

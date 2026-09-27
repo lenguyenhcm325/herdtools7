@@ -24,6 +24,15 @@
   (run python3 %{dep:grid.py} --corpus gpu-only --out gpu-only
    --bell ../bells/gpu.bell --libdir ../../herd/libdir --diyone7 %{bin:diyone7})))
 
+; The device-run subset of the het tree (hetlitmus/docs/corpus-grid.md
+; "Device-run subset").
+(rule
+ (targets het-subset.txt)
+ (deps subset.py grid.py het)
+ (action
+  (run python3 -B %{dep:subset.py} --corpus het --cpu-arch aarch64
+   --out het-subset.txt)))
+
 (alias
  (name corpus)
- (deps het het-x86_64 gpu-only))
+ (deps het het-x86_64 gpu-only het-subset.txt))
