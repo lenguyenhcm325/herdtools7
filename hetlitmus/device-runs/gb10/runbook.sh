@@ -46,7 +46,7 @@ hetlitmus/emit-het.sh --gpu-target cuda $HET_CORPUS --tests $RESULTS/eval-set.tx
 
 
 # == 4. tune ===================================================================
-TUNE_CONFIGS=75                                # scored configurations the search draws
+TUNE_CONFIGS=50                                # scored configurations the search draws
 python3 hetlitmus/tune_stress.py search --emit-dir $RESULTS/tune-emit \
     --tests $RESULTS/tuning-set.txt --out $RESULTS/tune --arch $ARCH --target gb10 --configs $TUNE_CONFIGS
 
