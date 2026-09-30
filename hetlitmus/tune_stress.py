@@ -581,7 +581,9 @@ def rank(a):
     rows = read_log(os.path.join(a.out, LOG_NAME))
     meta = log_meta(rows)
     target = a.target or meta.get("target") or ""
-    runs = [r for r in rows if r.get("type") == "run" and r["status"] == "scored"]
+    ok = {r["i"] for r in rows if r.get("type") == "config" and r["status"] == "scored"}
+    runs = [r for r in rows if r.get("type") == "run" and r["status"] == "scored"
+            and r["i"] in ok]
     if not runs:
         print("tune_stress: no scored run in %s" % a.out)
         return 0
