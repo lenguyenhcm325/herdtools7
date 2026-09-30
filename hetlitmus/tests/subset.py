@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """subset.py -- select the device-run subset of a het tree grid.py built: every
-experiment at its unordered and its fully fenced cell, and the full grid of the
-depth shapes.  Rationale: hetlitmus/docs/corpus-grid.md "Device-run subset".
+experiment at its unordered and its fully fenced cell, and the full grid of
+FULL_GRID_SHAPES.  Rationale: hetlitmus/docs/corpus-grid.md "Device-run subset".
 
 Usage: subset.py --corpus DIR [--cpu-arch aarch64|x86_64] --out FILE
 Output: one test name per line, sorted.
@@ -14,7 +14,7 @@ import sys
 
 import grid
 
-DEPTH_SHAPES = ["MP", "SB", "LB", "CoRR", "CoWR", "CoRW2"]   # run their full grid
+FULL_GRID_SHAPES = ["MP", "SB", "LB", "CoRR", "CoWR", "CoRW2"]
 PARTS = ["unordered-end", "fenced-end", "full-grid"]
 
 
@@ -26,16 +26,18 @@ def read_tree(d):
     """-> (survivor names, dropped name -> survivor)."""
     try:
         with open(os.path.join(d, "@all")) as f:
-            listed = set(l.strip()[:-len(".litmus")] for l in f if l.strip())
+            listed = set(l.strip() for l in f if l.strip())
         with open(os.path.join(d, "@dedup")) as f:
             alias = dict(l.split() for l in f if l.strip())
-    except OSError as e:
+    except (OSError, ValueError) as e:
         raise SubsetError("%s is not a grid.py tree: %s" % (d, e))
-    present = set(f[:-len(".litmus")] for f in os.listdir(d) if f.endswith(".litmus"))
+    present = set(f for f in os.listdir(d) if f.endswith(".litmus"))
     if present != listed:
-        raise SubsetError("%s holds %d .litmus, its @all names %d"
-                          % (d, len(present), len(listed)))
-    return present, alias
+        name = min(present ^ listed)
+        raise SubsetError("%s holds %s, its @all does not" % (d, name)
+                          if name in present else
+                          "%s lacks %s, its @all names it" % (d, name))
+    return set(f[:-len(".litmus")] for f in present), alias
 
 
 def select(isa, survivors, alias):
@@ -43,7 +45,7 @@ def select(isa, survivors, alias):
     def resolve(name):
         s = alias.get(name, name)
         if s not in survivors:
-            raise SubsetError("cell %s has no test in the tree (another ISA?)" % name)
+            raise SubsetError("cell %s has no test in the tree" % name)
         return s
 
     parts = {}
@@ -56,7 +58,7 @@ def select(isa, survivors, alias):
     # Every cell resolves, so a tree of another ISA is refused.
     for shape, _, tag, scope, cpu, gpu in grid.het_cells(isa):
         name = resolve(grid.het_name(isa, shape, tag, scope, cpu, gpu))
-        if shape in DEPTH_SHAPES:
+        if shape in FULL_GRID_SHAPES:
             parts.setdefault(name, "full-grid")
     return parts
 
@@ -68,9 +70,9 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     shapes = set(s for s, _ in grid.SHAPES)
-    if not set(DEPTH_SHAPES) <= shapes:
-        ap.error("depth shape(s) not in grid.SHAPES: %s"
-                 % " ".join(sorted(set(DEPTH_SHAPES) - shapes)))
+    if not set(FULL_GRID_SHAPES) <= shapes:
+        ap.error("full-grid shape(s) not in grid.SHAPES: %s"
+                 % " ".join(sorted(set(FULL_GRID_SHAPES) - shapes)))
     try:
         survivors, alias = read_tree(a.corpus)
         parts = select(a.cpu_arch, survivors, alias)

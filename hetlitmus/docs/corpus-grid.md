@@ -85,9 +85,9 @@ A device run takes a subset of the het tree, chosen by coverage.
 | fenced end | every experiment at the ISA's full barrier against `fsc`, or that cell's dedup survivor |
 | full grid | every cell of MP, SB, LB, CoRR, CoWR and CoRW2 |
 
-Every shape runs under every device assignment twice: with no ordering, and
-with a fence on every program-order edge of both devices. Six shapes run their
-full grid, so two tests that differ only in scope, CPU order or GPU order can be
-compared. MP, SB and LB between them give each device every access pair on two
+Every shape runs under every device cut twice: with no ordering, and with a
+fence on every program-order edge of both devices. The full-grid part runs
+every cell of its shapes, so two tests that differ only in scope, CPU order or
+GPU order can be compared. MP, SB and LB between them give each device every access pair on two
 locations (write-write, read-read, write-read, read-write), and CoRR, CoWR and
 CoRW2 every pair on one location (read-read, write-read, read-write).
