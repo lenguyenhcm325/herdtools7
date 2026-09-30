@@ -72,6 +72,7 @@ def het_draw(seed, who, k):
 K_STRIDE = 64
 K_RUN_SEED = 1000000
 MAX_ATTEMPTS = 16
+MAX_BUILD_ERRORS = 8
 
 STRESS_BLOCK_SET = (0, 1, 2, 4, 8, 16, 32, 64)
 CPU_WORDS_PER_REGION_SET = (8, 16, 32, 64, 128, 256)
@@ -274,6 +275,9 @@ def build(a, env, k, timeout):
                            timeout=timeout)
     except subprocess.TimeoutExpired:
         return "build timed out after %d s" % timeout
+    # rc 2 is build.sh refusing its arguments, arch or toolchain: no redraw fixes it.
+    if r.returncode == 2:
+        die("build.sh rc=2: %s" % r.stderr.strip()[-300:])
     if r.returncode != 0:
         return "build.sh rc=%d: %s" % (r.returncode, r.stderr.strip()[-300:])
     return None
@@ -407,6 +411,11 @@ def score(lines, max_discard_pct):
         rec.update(status="excluded",
                    why="not one of %d run(s) was usable (every run "
                        "COLD-INVALID)" % R)
+    elif rec["k_eff"] < rec["k"]:
+        # het_stats_compute()'s decode guard: a degenerate sighting's count is no reading.
+        rec.update(status="excluded",
+                   why="%d degenerate sighting(s), outside k_eff"
+                       % (rec["k"] - rec["k_eff"]))
     elif n > 0 and disc * 100 > n * R * max_discard_pct:
         rec.update(status="excluded",
                    why="%d of %d iteration(s) discarded at the rendezvous"
@@ -427,7 +436,7 @@ def run_config(a, env, log, i, k):
         log.emit({"type": "config", "i": i, "seed": a.seed, "drawn": k,
                   "status": "build_error", "why": why})
         print("config %d: %s" % (i, why))
-        return False
+        return "build_error"
     print("config %d: built in %.1f s" % (i, time.time() - t0))
 
     for row_ix, t in enumerate(env.tests):
@@ -452,7 +461,7 @@ def run_config(a, env, log, i, k):
                       "status": "invalid_geometry", "why": refusal,
                       "realized": real})
             print("config %d: invalid geometry -- %s" % (i, refusal))
-            return False
+            return "invalid_geometry"
         rec = {"type": "run", "i": i, "row": t, "het_seed": seed,
                "secs": round(secs, 3), "realized": real}
         if rc != 0:
@@ -468,7 +477,7 @@ def run_config(a, env, log, i, k):
                  secs, ("  ** " + rec["why"] + " **") if rec.get("why") else ""))
     log.emit({"type": "config", "i": i, "seed": a.seed, "drawn": k,
               "status": "scored"})
-    return True
+    return "scored"
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +531,17 @@ def check_knob_set(path, i, k, verb):
                verb))
 
 
+def search_ident(a, env):
+    """Every input the draw, the row seeds, the build or the scoring reads: a
+    log continues only the search whose meta line matches all of them."""
+    return {"seed": a.seed, "iters": a.iters, "target": a.target,
+            "vendor": env.vendor, "arch": a.arch or "", "emit_dir": env.emit,
+            "tests": env.tests, "cores": env.ncores, "cpu_test": env.cpu_test,
+            "reserve": env.reserve, "block_dim_lo": env.block_dim_lo,
+            "max_discard_pct": env.max_discard_pct,
+            "cap_cpu": a.cap_cpu, "cap_gpu": a.cap_gpu}
+
+
 # ---------------------------------------------------------------------------
 # Passes.
 # ---------------------------------------------------------------------------
@@ -533,7 +553,6 @@ def search(a):
     path = os.path.join(a.out, LOG_NAME)
     i, scored = 0, 0
     fresh = not os.path.isfile(path)
-    a.target = a.target or os.uname().nodename
     if not fresh:
         if not a.resume:
             die("%s already holds a log: pass --resume to continue that search, "
@@ -542,10 +561,13 @@ def search(a):
         meta = log_meta(rows)
         if a.seed is None:
             a.seed = meta["seed"]
-        if meta["seed"] != a.seed or meta["iters"] != a.iters:
-            die("%s was written at seed=%s iters=%s, not seed=%s iters=%s -- "
-                "that is another stream, not a continuation"
-                % (path, meta["seed"], meta["iters"], a.seed, a.iters))
+        a.target = a.target or meta.get("target")
+        ident = search_ident(a, env)
+        diff = ["%s=%s, not %s" % (n, json.dumps(meta.get(n)), json.dumps(v))
+                for n, v in sorted(ident.items()) if meta.get(n) != v]
+        if diff:
+            die("%s was written for another search (%s) -- that is not a "
+                "continuation" % (path, "; ".join(diff)))
         for r in rows:
             if r.get("type") == "config":
                 if "drawn" in r:
@@ -558,18 +580,23 @@ def search(a):
         a.seed = secrets.randbits(31)
     log = Log(path)
     if fresh:
-        log.emit({"type": "meta", "seed": a.seed, "iters": a.iters,
-                  "target": a.target, "vendor": env.vendor, "arch": a.arch or "",
-                  "emit_dir": env.emit, "tests": tests,
-                  "cores": env.ncores,
-                  "block_dim_lo": env.block_dim_lo})
+        a.target = a.target or os.uname().nodename
+        meta = {"type": "meta"}
+        meta.update(search_ident(a, env))
+        log.emit(meta)
     print("tune_stress: seed=%d target=%s %s %d row(s), %d core(s)"
           % (a.seed, a.target, env.vendor, len(tests), env.ncores))
+    unbuilt = 0
     try:
         while a.configs == 0 or scored < a.configs:
             k = draw_config(a.seed, i, env)
-            if run_config(a, env, log, i, k):
+            status = run_config(a, env, log, i, k)
+            if status == "scored":
                 scored += 1
+            unbuilt = unbuilt + 1 if status == "build_error" else 0
+            if unbuilt >= MAX_BUILD_ERRORS:
+                die("configurations %d-%d did not build; the per-dir logs are in %s"
+                    % (i - unbuilt + 1, i, os.path.join(a.out, "build")))
             i += 1
     except KeyboardInterrupt:
         print("\ntune_stress: interrupted at index %d, %d config(s) scored -- "
@@ -582,8 +609,13 @@ def rank(a):
     meta = log_meta(rows)
     target = a.target or meta.get("target") or ""
     ok = {r["i"] for r in rows if r.get("type") == "config" and r["status"] == "scored"}
-    runs = [r for r in rows if r.get("type") == "run" and r["status"] == "scored"
-            and r["i"] in ok]
+    # A resumed index reruns every row, so its last record per row is the
+    # attempt that reached the config line; the interrupted attempt's are not.
+    last = {}
+    for r in rows:
+        if r.get("type") == "run":
+            last[(r["i"], r["row"])] = r
+    runs = [r for r in last.values() if r["status"] == "scored" and r["i"] in ok]
     if not runs:
         print("tune_stress: no scored run in %s" % a.out)
         return 0
@@ -608,8 +640,7 @@ def rank(a):
               % (row, r["i"], r["rate_s"], r["weak"], r["secs"]))
     if dark:
         print("  no configuration revealed: %s" % ", ".join(dark))
-    never = sorted(set(r["row"] for r in rows if r.get("type") == "run")
-                   - set(best))
+    never = sorted(set(r["row"] for r in last.values()) - set(best))
     if never:
         print("  never scored (every line excluded or errored): %s"
               % ", ".join(never))
