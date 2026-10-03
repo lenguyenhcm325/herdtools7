@@ -81,8 +81,8 @@ A device run takes a subset of the het tree, chosen by coverage.
 
 | Part | Chosen tests |
 |---|---|
-| unordered end | every experiment (shape x cut) at `sys-plain.rlx` |
-| fenced end | every experiment at the ISA's full barrier against `fsc`, or that cell's dedup survivor |
+| unordered | every experiment (shape x cut) at `sys-plain.rlx` |
+| fully fenced | every experiment at the ISA's full barrier against `fsc`, or that cell's dedup survivor |
 | full grid | every cell of MP, SB, LB, CoRR, CoWR and CoRW2 |
 
 Every shape runs under every device cut twice: with no ordering, and with a

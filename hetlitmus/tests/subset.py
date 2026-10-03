@@ -15,7 +15,7 @@ import sys
 import grid
 
 FULL_GRID_SHAPES = ["MP", "SB", "LB", "CoRR", "CoWR", "CoRW2"]
-PARTS = ["unordered-end", "fenced-end", "full-grid"]
+PARTS = ["unordered", "fully-fenced", "full-grid"]
 
 
 class SubsetError(ValueError):
@@ -49,8 +49,8 @@ def select(isa, survivors, alias):
         return s
 
     parts = {}
-    for part, cpu, gpu in (("unordered-end", "plain", "rlx"),
-                           ("fenced-end", grid.CPU_ISAS[isa]["barrier"], "fsc")):
+    for part, cpu, gpu in (("unordered", "plain", "rlx"),
+                           ("fully-fenced", grid.CPU_ISAS[isa]["barrier"], "fsc")):
         for shape, cycle in grid.SHAPES:
             for tag in grid.cut_classes(cycle):
                 name = grid.het_name(isa, shape, tag, "sys", cpu, gpu)
