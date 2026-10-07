@@ -31,8 +31,11 @@ would join the devices once and leave every later iteration unsynchronised.
 ## Runtime stress pattern
 
 The GPU stress routine takes its access pattern as a runtime kernel argument: a
-constant lets nvcc hoist the traffic out and leave the bookkeeping, and
-`volatile` is not the fix, since the stress must stay plain cacheable traffic.
+constant lets nvcc hoist the traffic out and leave the bookkeeping. With CUDA
+12.9 for `sm_121`, nvcc merges the source `ld;ld` pair into one scratchpad load
+per round. A `volatile` location-table read preserved both loads in that build,
+but PTX gives volatile operations relaxed system-scope semantics. Stress must
+remain plain and unscoped, so the source pair is retained without that workaround.
 
 ## CPU-side stress liveness
 

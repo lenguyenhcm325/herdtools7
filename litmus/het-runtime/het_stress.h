@@ -105,8 +105,9 @@ __device__ static inline void het_idle(void) {
 }
 
 /* [CudaLitmus] functions.cu:19, the pair of [Kirkham20 sec 3.1], plain so it adds
- * no ordering edge.  `pattern' must be a RUNTIME value, or the loop counts on with
- * its traffic folded away (hetlitmus/docs/faithfulness.md "Runtime stress pattern"). */
+ * no ordering edge. `pattern' must be a RUNTIME value; nvcc 12.9.86 for sm_121
+ * merges the two `ld;ld' scratchpad loads into one
+ * (hetlitmus/docs/faithfulness.md "Runtime stress pattern"). */
 __device__ static void het_do_stress(uint32_t* scratchpad,
                                      uint32_t* scratch_locations,
                                      uint32_t iterations,

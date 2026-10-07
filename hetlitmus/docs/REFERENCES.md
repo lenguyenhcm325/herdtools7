@@ -315,6 +315,8 @@ pp. 89–97. DOI 10.1145/1785414.1785443.
 ## [PtxISA]
 NVIDIA. *Parallel Thread Execution ISA*, Version 8.8 (CUDA Toolkit 12.9),
 `https://docs.nvidia.com/cuda/archive/12.9.0/parallel-thread-execution/`.
+* "volatile Operation": volatile operations are equivalent to relaxed system-scope memory
+  operations, with the additional constraints stated in that section.
 * "Parallel Synchronization and Communication Instructions: membar/fence", PTX ISA Notes:
   "fence introduced in PTX ISA version 6.0"; ".acquire and .release qualifiers for fence
   instruction introduced in PTX ISA version 8.6".
