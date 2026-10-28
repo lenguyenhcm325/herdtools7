@@ -8,7 +8,7 @@ static int gd_alloc_noise(void** _pp, size_t _bytes){
   }
   *_pp = malloc(_bytes);
   if (*_pp == NULL) return -1;
-  het_cpu_first_touch(*_pp, _bytes);   /* unwritten pages all map to the one zero page, so the reads would hit cache */
+  het_cpu_first_touch(*_pp, _bytes);   /* untouched pages all map to one zero page */
   return 0;
 }
 static void gd_free_noise(void* _p){

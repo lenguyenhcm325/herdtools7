@@ -49,8 +49,8 @@ typedef void (*het_poke_fn)(void);
 #error "HET_RDV_POKE_EVERY must be a power of two"
 #endif
 
-/* Relaxed on purpose: an acquire poll self-invalidates the Hopper L1
-   [Bagchi26 sec 5.3], erasing the cache state the iteration races on. */
+/* Relaxed on purpose: on Hopper an acquire appears to self-invalidate the L1
+   [Bagchi26 sec 5.3]. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
 __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
                                             uint32_t _cap) {
@@ -59,7 +59,8 @@ __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
   uint32_t _i = 0;
   while (_v < _target && _i < _cap) {
     _i++;
-    /* Back-off as in [AMDGPUIntrin] __gpu_thread_suspend; benefit unmeasured. */
+    /* Adapted from [AMDGPUIntrin] __gpu_thread_suspend, which sleeps 2;
+       benefit unmeasured. */
     __builtin_amdgcn_s_sleep(1);
     _v = __hip_atomic_load(_ctr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);
   }

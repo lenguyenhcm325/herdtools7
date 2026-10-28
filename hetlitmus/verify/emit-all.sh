@@ -30,7 +30,6 @@ OUTDIR="${1:?usage: emit-all.sh OUTDIR}"
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 
-# Outside OUTDIR: `diff -r' compares dotfiles too.
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 

@@ -101,8 +101,6 @@ let dump_test_lane dialect gp ch =
        gp.gp_blk gp.gp_lane) ;
   List.iter (fun n -> s (Printf.sprintf "    int r%d = 0;\n" n))
     gp.gp_regs ;
-  (* #pragma unroll 1: nvcc otherwise unrolls this loop ~16x, changing the
-     timing the test probes. *)
   s {|    #pragma unroll 1
     for (int _n=0; _n<SIZE_OF_TEST; ++_n) {
       if ((int)(het_draw(_seed, _who, 2u*(uint64_t)_n) % 100u) < HET_GPU_PRE_STRESS_PCT)

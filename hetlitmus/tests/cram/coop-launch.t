@@ -10,7 +10,7 @@ Persistent-loop guard.
   $ grep -c '<<<' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu || true
   0
 
-(b,c) one GPU lane and one CPU wrapper.
+(b,c) one iteration loop each in the GPU lane, the CPU wrapper and the readout.
   $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu
   3
 

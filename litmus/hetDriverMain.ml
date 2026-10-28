@@ -150,7 +150,7 @@ let dump_campaign_knobs ch =
 
   s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
   s "  memset(_recs, 0, sizeof _recs);\n" ;
-  (* getenv, never -D: nvcc would fold a compile-time value and delete the branch. *)
+  (* getenv, never -D: a rerun with new values needs no rebuild. *)
   s {|  int _runs_budget = (int)het_env_long("HET_RUNS_MAX", NUMBER_OF_RUN);
   if (_runs_budget > NUMBER_OF_RUN) {
     fprintf(stderr, "HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R with a fresh HET_SEED (hetlitmus/campaign.py).\n", _runs_budget, (int)NUMBER_OF_RUN);
