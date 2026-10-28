@@ -1,5 +1,4 @@
-What litmus7 refuses before it renders, and that it renders once
-(litmus/gpuLang.ml, litmus/HetArch.ml, litmus/hetEmit.ml).
+What litmus7 refuses before it renders, and that it renders once.
 
   $ mk () { sed -e "s/NAME/$1/" -e "s|GPUCELL|$2|" base.litmus > "$1.litmus"; mkdir "out-$1"; }
   $ cat > base.litmus <<'EOF'
@@ -86,8 +85,7 @@ What litmus7 refuses before it renders, and that it renders once
   $ grep -c 'HetLitmus: emitted CUDA' lisa.txt
   1
 
-(g) a scopes: tree litmus7 cannot read, one naming a proc that is not a gpu
-proc, and one leaving a gpu proc out.
+(g) an unreadable scopes: tree, one naming a non-gpu proc, and one leaving a gpu proc out.
   $ mk badtree 'r[relaxed,sys] r1 x'
   $ sed -i 's|scopes:.*|scopes: (sys (gpu (cta P1)|' badtree.litmus
   $ litmus7 -gpu-target cuda -o out-badtree badtree.litmus 2>badtree.err >/dev/null; echo "exit $?"
@@ -115,8 +113,7 @@ proc, and one leaving a gpu proc out.
   HetLitmus REFUSED (het) omits.litmus: HetLitmus: the scopes tree places no P2; a declared tree places every gpu proc
   exit 3
 
-(g2) a cta placing no proc: it would leave the block indices past it with no
-lane at (0,0), and nothing to publish the iteration count.
+(g2) a cta placing no proc.
   $ mk emptycta 'r[relaxed,sys] r1 x'
   $ sed -i 's|scopes:.*|scopes: (sys (gpu (cta) (cta P1)))|' emptycta.litmus
   $ litmus7 -gpu-target cuda -o out-emptycta emptycta.litmus 2>&1 >/dev/null; echo "exit $?"

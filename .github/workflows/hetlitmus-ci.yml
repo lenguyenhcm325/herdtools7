@@ -1,10 +1,5 @@
-# Every hetlitmus make gate that runs without a GPU device: the base
-# umbrella (make hetlitmus-test) in one job, the deviceless
-# toolchain gates in the other.  Only the second job installs nvcc and
-# hipcc; no job needs a device.  The one device-executing gate
-# (hetlitmus-characterize-hw) probes for real hardware and fails closed
-# on a hosted runner; it runs on a GPU box only
-# (hetlitmus/docs/README-tests.md).
+# Every HetLitmus gate that runs without a GPU: the base lane in one job, the
+# toolchain gates in the other.
 name: hetlitmus
 
 on:
@@ -20,8 +15,7 @@ concurrency:
 jobs:
   base-lane:
     name: base gates (make hetlitmus-test)
-    # jammy x86_64: the image the toolchain job's ROCm apt line needs, so both
-    # jobs run the suite on one host ISA.
+    # jammy: the ROCm apt line in the toolchain job needs it.
     runs-on: ubuntu-22.04
 
     steps:
@@ -34,7 +28,6 @@ jobs:
           ocaml-compiler: "5.1"
           dune-cache: true
 
-      # verdictcheck compiles the emitted runtime header.
       - name: Preflight toolchain assertion
         run: |
           for t in gcc python3; do
@@ -44,21 +37,17 @@ jobs:
       - name: Install opam dependencies
         run: opam install . --deps-only --yes --with-test
 
-      # Version.ml is generated, not committed; a bare dune build fails
-      # without it.
       - name: Build
         run: opam exec -- make build
 
       - name: Run the base gates
-        # The dune cache replays recorded cram output; the gates only count
-        # as executed with it off.
         env:
           DUNE_CACHE: disabled
         run: opam exec -- make -k hetlitmus-test
 
   toolchain-lane:
     name: toolchain gates (no device)
-    # jammy: must match the suite of the ROCm apt line below.
+    # jammy: must match the ROCm apt line below.
     runs-on: ubuntu-22.04
 
     steps:
@@ -96,8 +85,7 @@ jobs:
           sudo apt-get install -y hipcc hip-dev hip-runtime-amd rocm-device-libs
           echo /opt/rocm/bin >> "$GITHUB_PATH"
 
-      # A missing tool must fail here: without hipcc smoke.sh SKIPs its .hip
-      # rep and still exits 0.
+      # Fail on a missing tool: without hipcc, smoke.sh skips its .hip rep and exits 0.
       - name: Preflight toolchain assertion
         run: |
           for t in nvcc hipcc clang gcc g++ python3; do

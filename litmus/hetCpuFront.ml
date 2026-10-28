@@ -14,27 +14,14 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the per-CPU-ISA column frontend the het emitter is closed over
-   (HetEmit.Make's CpuF parameter) -- the ISA label, the host/cross-compilation
-   tokens and the single-column sub-parser, one module per ISA.  Nothing here
-   names an Arch_litmus/Compile_litmus module: the litmus7 `Het' arm pairs one
-   of these with the matching chain once scan_cpu_isa has named the ISA.
-   hetlitmus/docs/het-emission.md, "CPU ISA from the device tag". *)
-
-(* The CPU toolchain facts an emitted harness carries: the ISA label, the two
-   host-detection tokens, the cross-assembly pair and the CPU compile flags.
-   Each ISA module below provides one; the file emitters read it. *)
 type toolchain = {
     isa_name : string ;
-    host_macro : string ;          (* CPP macro true on the CPU host ISA *)
-    host_uname : string ;          (* `uname -m' on a host of this ISA *)
-    (* (clang triple, -std) cross-assembling the CPU asm off that host
-       (hetlitmus/docs/het-emission.md, "The CPU object"). *)
+    host_macro : string ;
+    host_uname : string ;
     cross : string * string ;
     cpu_cflags : string ;
   }
 
-(* The column sub-parsers drive an ISA lexer, whose whole config is [debug]. *)
 module type Config = sig
   val debug : bool
 end
@@ -48,9 +35,8 @@ module AArch64 (O:Config) = struct
       host_macro = "__aarch64__" ;
       host_uname = "aarch64" ;
       cross = ("aarch64-linux-gnu","gnu11") ;
-      (* litmus7 lowers the CPU `ra' order's acquire read to LDAPR, which is
-         ARMv8.3 RCpc and the assembler's default base architecture rejects;
-         upstream's mechanism is a compile flag (litmus/libdir/armv8.3.cfg). *)
+      (* litmus7 lowers the `ra' acquire read to LDAPR (ARMv8.3), which the
+         default -march rejects. *)
       cpu_cflags = "-march=armv8.3-a" ;
     }
 
@@ -77,8 +63,6 @@ module X86_64 (O:Config) = struct
       host_macro = "__x86_64__" ;
       host_uname = "x86_64" ;
       cross = ("x86_64-linux-gnu","gnu11") ;
-      (* litmus7 lowers this corpus into base AMD64; no extension flag is
-         owed. *)
       cpu_cflags = "" ;
     }
 

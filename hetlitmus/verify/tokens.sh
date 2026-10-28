@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# tokens.sh -- drive the static faithfulness and stress-liveness checkers over
-# the corpus (hetlitmus/docs/faithfulness.md).  Subcommands:
+# tokens.sh -- run the static faithfulness and stress-liveness checkers.  Subcommands:
 #   all        covercheck.py, then ptxcheck.py over verify/faithful-cover.txt
 #   full       ptxcheck.py over both corpora entire
 #   gpu-only | het        one corpus
 #   hipsrc     hipsrccheck.py over the gpu-only and het-x86_64 trees
 #   stress | cpustress    the two liveness checkers over their reps
-# Every non-PASS test prints its diff; a cover miss, a census miss, a FAIL, a
-# GUARD-FAIL or an ERROR exits non-zero.  JOBS sets the worker count.
 set -u
 
 . "$(dirname "$0")/../paths.sh"
@@ -15,16 +12,14 @@ set -u
 cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
-CHECK="$REPO/hetlitmus/verify/ptxcheck.py"   # the per-test checker run_one runs
+CHECK="$REPO/hetlitmus/verify/ptxcheck.py"
 HIPSRCCHECK="$REPO/hetlitmus/verify/hipsrccheck.py"
 COVERCHECK="$REPO/hetlitmus/verify/covercheck.py"
 COVER="$REPO/hetlitmus/verify/faithful-cover.txt"
-GPU_DIR="$GPU_CORPUS"            # the built trees (paths.sh)
+GPU_DIR="$GPU_CORPUS"
 HET_DIR="$HET_CORPUS"
 X86_DIR="$X86_CORPUS"
 EXPECT_COVER="$CENSUS_COVER"
-# `nproc' honours this process's affinity mask but NOT a cgroup CPU quota, so
-# the cap is what keeps an uncapped default from oversubscribing a container.
 _jobs_default() {
   local n
   n="$(nproc 2>/dev/null || echo 4)"
@@ -35,7 +30,6 @@ JOBS="${JOBS:-$(_jobs_default)}"
 RESDIR="$(mktemp -d)"
 trap 'rm -rf "$RESDIR"' EXIT
 
-# ---- one test -> a single result line "VERDICT name" ----------------------
 run_one() {
   local t="$1" name out rc
   name="$(basename "$t" .litmus)"
@@ -50,7 +44,6 @@ run_one() {
 export -f run_one
 export CHECK RESDIR
 
-# ---- sweep the .litmus paths on stdin, print table + tally ----------------
 run_paths() {
   local label="$1" expect="$2"
   printf '\n===== static token check: %s =====\n' "$label"
@@ -68,15 +61,12 @@ run_paths() {
   err=$(grep -c '^ERROR '       "$res" || true)
   printf 'TALLY %s: %d/%d PASS  (FAIL=%d  GUARD-FAIL=%d  ERROR=%d)\n' \
          "$label" "$pass" "$total" "$fail" "$guard" "$err"
-  # echo any diffs for non-PASS tests so failures are never papered over
   if [ "$pass" -ne "$total" ]; then
     printf '\n--- diffs for non-PASS %s tests ---\n' "$label"
     grep -vE '^PASS ' "$res" | while read -r v n; do
       printf '>>> %s %s\n' "$v" "$n"; cat "$RESDIR/diff.$n" 2>/dev/null
     done
   fi
-  # `pass -eq total' is VACUOUSLY true on an empty or misnamed input (0 -eq 0),
-  # so the census is asserted against the count the call site pins.
   if [ "$total" -ne "$expect" ]; then
     printf 'CENSUS FAIL %s: %d .litmus swept, expected %d (empty/misnamed input?)\n' \
            "$label" "$total" "$expect" >&2
@@ -87,16 +77,12 @@ run_paths() {
 
 run_dir() { ls "$1"/*.litmus 2>/dev/null | run_paths "$2" "$3"; }
 
-# The cover, relative to $CORPUS: covercheck.py asserts it reaches every
-# feature of the full corpus, so this sweep misses no shape `full' compiles.
 run_cover() {
   python3 "$COVERCHECK" || return 1
   grep -vE '^[[:space:]]*(#|$)' "$COVER" | sed "s|^|$CORPUS/|" \
     | run_paths cover "$EXPECT_COVER"
 }
 
-# ---- $1 banner, $2 tag, $3 what-failed, $4 checker, $5 flags, $6.. reps ----
-# The report fails when no rep ran; the OK line names the reps that did.
 _liveness_report() {
   local banner="$1" tag="$2" what="$3" checker="$4" flags="$5"
   shift 5
@@ -122,23 +108,18 @@ _liveness_report() {
   return 1
 }
 
-# ---- GPU scratchpad stress liveness (stresscheck.py) ----------------------
-# ptxcheck is blind to the stress layer; this asks whether it is there at all.
 stress_report() {
   _liveness_report "STRESS PTX SURVIVAL: is the GPU scratchpad layer in the PTX?" \
     STRESS "carry a stress layer nvcc folded away" stresscheck.py "" \
     MP-cg-sys-ra.acq
 }
 
-# ---- CPU + interconnect stress liveness (cpustresscheck.py) ---------------
-# The preload, the CPU stress threads and the noise pair never enter the PTX.
 cpustress_report() {
   _liveness_report "CPU + INTERCONNECT STRESS LIVENESS: does that layer run?" \
     CPUSTRESS "carry a dead CPU/interconnect stress layer" cpustresscheck.py "" \
     MP-cg-sys-ra.acq
 }
 
-# ---------------------------------------------------------------------------
 cmd="${1:-all}"
 case "$cmd" in
   gpu-only)  run_dir "$GPU_DIR" gpu-only "$CENSUS_GPU_ONLY" ;;

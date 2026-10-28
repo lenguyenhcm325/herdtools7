@@ -1,14 +1,9 @@
 #!/bin/sh
-# The AMD probe, sibling of probe-cuda.sh: it records what the vendor tools
-# report and stamps probe_status, and it runs NO device-attribute kernel -- a
-# HIP twin of probe.cu asks a different runtime different questions and there is
-# no AMD device here to write it against.
-#
+# Probe the AMD box from the vendor tools and write
+# $RESULTS/probe.txt as key=value lines.
 #   sh probe-hip.sh                 # run-out/<date>-<host>/probe.txt
 #   RESULTS=... sh probe-hip.sh     # somewhere else
-#
-# The host-half keys are spelled as probe-cuda.sh spells them, so the two
-# probe.txt files diff.  Everything is key=value; none of it is a litmus result.
+# Host keys are spelled as probe-cuda.sh spells them.
 set -eu
 
 HIPCC="${HIPCC:-hipcc}"
@@ -40,7 +35,6 @@ for f in lrcpc lrcpc2 atomics asimd sve; do
 done
 emit "cpu_model=$(grep -m1 -E '^(model name|CPU part|Model)' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//' || echo unknown)"
 
-# command -v alone resolves a builtin or function, which is no toolchain.
 if [ -x "$(command -v "$HIPCC" 2>/dev/null || true)" ]; then
   emit "hipcc=$($HIPCC --version 2>/dev/null | grep -m1 -E 'HIP version|clang version' || echo unknown)"
 else
@@ -51,8 +45,6 @@ else
 fi
 emit "rocm_path=${ROCM_PATH:-$(dirname "$(dirname "$(command -v "$HIPCC")")")}"
 
-# The gfx architectures visible here, from amdgpu-arch and from rocminfo's agent
-# list: either tool can be absent, and a disagreement is the operator's to read.
 archs=""
 if command -v amdgpu-arch >/dev/null 2>&1; then
   archs="$(amdgpu-arch 2>/dev/null | tr -d ' \r' | grep -c . || true)"
@@ -67,8 +59,6 @@ else
   emit "rocminfo_gfx_list=TOOL_ABSENT"
 fi
 
-# The suggested arch is the single distinct gfx name the tools agree on.  Two
-# names is a box the operator must choose a device on, not a probe failure.
 uniq_archs="$( { amdgpu-arch 2>/dev/null || true ; \
                  rocminfo 2>/dev/null | sed -n 's/.*Name: *\(gfx[0-9a-f]*\).*/\1/p' || true ; } \
                | tr -d ' \r' | grep -E '^gfx[0-9a-f]+$' | sort -u )"

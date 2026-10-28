@@ -90,10 +90,6 @@ S with
     | locs ->
         fprintf chan "%s\n" (dump_locations locs)
     end ;
-    (* HetLitmus: print the Bell scope tree and region map -- the body form
-       herd parses, unlike the inert Scopes= info field; inert when extra_data
-       carries neither.
-       hetlitmus/docs/het-litmus-format.md "The scopes tree". *)
     List.iter
       (function
         | MiscParser.BellExtra bi -> fprintf chan "%s" (BellInfo.pp bi)

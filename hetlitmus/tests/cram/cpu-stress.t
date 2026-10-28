@@ -1,5 +1,4 @@
-CPU-side + interconnect stress guard (hetlitmus/docs/environment-design.md
-"Interconnect stress"; hetlitmus/docs/het-emission.md, "The pair a harness names").
+CPU-side + interconnect stress guard.
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-ra.acq.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-plain.fsc.litmus >/dev/null 2>&1
@@ -9,11 +8,7 @@ CPU-side + interconnect stress guard (hetlitmus/docs/environment-design.md
   $ MPH=hip/MP-cg-sys-plain.acq-x86_64/MP-cg-sys-plain.acq-x86_64
   $ S=S-cg-sys-plain.fsc/S-cg-sys-plain.fsc
 
-Counts that a wrong site could satisfy are SCOPED to one function body, never
-raised to a file-wide total.
-
-(a) the host ISA reaches no nvcc translation unit: the preload primitives live
-in het_cpu_stress.h behind HET_CPU_STRESS_IMPL, which only <test>_cpu.c defines.
+(a) the host-ISA preload code reaches no nvcc translation unit.
   $ test -f MP-cg-sys-ra.acq/het_cpu_stress.h && echo present
   present
   $ grep -c '#define HET_CPU_STRESS_IMPL' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c
@@ -27,15 +22,13 @@ in het_cpu_stress.h behind HET_CPU_STRESS_IMPL, which only <test>_cpu.c defines.
   $ grep -cE 'dc civac|prfm |clflush|prefetcht0' $MP.cu || true
   0
 
-(a2) het_cpu_stress.h includes no <pthread.h>, which would not cross-assemble
-for AArch64; the .cu, built for the native host, is where pthread_create lives.
+(a2) het_cpu_stress.h includes no <pthread.h>.
   $ grep -c '#include <pthread.h>' MP-cg-sys-ra.acq/het_cpu_stress.h || true
   0
   $ grep -c '#include <pthread.h>' $MP.cu
   1
 
-(b) nothing is injected inside the tested body: it stays litmus7's own code0,
-its two tested stores in the release form this row's CPU `ra' order is about.
+(b) nothing is injected inside the tested body.
   $ sed -n '/^__attribute__((noinline)) static void code0/,/^}/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
   2
   $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c | grep -cE 'het_cpu_preload|het_cpu_affinity|dc civac|prfm' || true
@@ -43,8 +36,7 @@ its two tested stores in the release form this row's CPU `ra' order is about.
   $ sed -n '/^__attribute__((noinline)) static void code0/,/^}/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c | grep -coE '"stlr '
   2
 
-The preload runs per iteration, before the tested body, on the slot of this
-proc's own test variables, and the affinity call precedes the rendezvous.
+The preload runs per iteration, before the tested body, on this proc's slot.
   $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, a->_seed, _who, _kn + 1u, HET_CPU_PRELOAD_PCT)'
   1
   $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'void\* const _pl\[2\] = { (void\*)(a->x + _slot), (void\*)(a->y + _slot) }'
@@ -52,8 +44,7 @@ proc's own test variables, and the affinity call precedes the rendezvous.
   $ grep -A2 'static void\* cpu_thread_P0' $MP.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
   1
 
-(c) the stress-thread and noise traffic is disjoint from the test: no stress object is
-ever x, y or barrier [Sorensen16 sec 1].
+(c) no stress object is ever a test variable or the barrier.
   $ grep -cE '_sa\[_e\]\.(scratch|idx) *= *(_cpu_scratch|_cpu_idx)' $MP.cu
   2
   $ grep -cE '_sa\[_e\]\.(scratch|idx) *= *(x|y|barrier)' $MP.cu || true
@@ -61,8 +52,7 @@ ever x, y or barrier [Sorensen16 sec 1].
   $ grep -cE '_na\[_t\]\.buf *= *\(volatile const uint64_t\*\)_noise \+ \(uint64_t\)_t \* _noise_slice' $MP.cu
   1
 
-(d) four object classes, four allocators: a slot for the rendezvous counter,
-malloc for the CPU scratchpad, gd_alloc_noise for the noise buffer.
+(d) each object class has its own allocator.
   $ grep -c 'uint64_t \*barrier; gd_alloc_shared((void\*\*)&barrier, sizeof(uint64_t)\*HET_SLOT_STRIDE_WORDS);' $MP.cu
   1
   $ grep -c 'malloc_check(sizeof(uint64_t)\*HET_CPU_SCRATCH_WORDS)' $MP.cu
@@ -72,8 +62,7 @@ malloc for the CPU scratchpad, gd_alloc_noise for the noise buffer.
   $ grep -c 'gd_alloc_shared((void\*\*)&_cpu_scratch' $MP.cu || true
   0
 
-(e) the stress orchestration order, which no gate script reads: raise stress_go,
-then spawn the stress threads and the noise, then the test threads and the kernel.
+(e) stress starts before the test threads and the kernel.
   $ GO=$(grep -n '__atomic_store_n(&_stress_go, 1' $MP.cu | cut -d: -f1)
   $ EN=$(grep -n 'pthread_create(&_sth' $MP.cu | cut -d: -f1)
   $ NS=$(grep -n 'pthread_create(&_nth' $MP.cu | cut -d: -f1)
@@ -85,8 +74,7 @@ then spawn the stress threads and the noise, then the test threads and the kerne
   $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$NS" ] && [ "$NS" -lt "$TH" ] && [ "$TZ" -lt "$LA" ] && echo 'go < stress threads < noise threads < test threads (all) < launch'
   go < stress threads < noise threads < test threads (all) < launch
 
-and the flag comes down only after the TERMINAL sync, so the stress covers the
-whole tested window and no more.
+and stops only after the terminal sync.
   $ SY=$(grep -n '_s = cudaDeviceSynchronize' $MP.cu | cut -d: -f1)
   $ OFF=$(grep -n '__atomic_store_n(&_stress_go, 0' $MP.cu | cut -d: -f1)
   $ JN=$(grep -n 'pthread_join(_sth' $MP.cu | cut -d: -f1)
@@ -94,13 +82,11 @@ whole tested window and no more.
   $ [ "$SY" -lt "$OFF" ] && [ "$OFF" -lt "$JN" ] && [ "$JN" -lt "$NJ" ] && echo 'device sync < lower go < join stress < join noise'
   device sync < lower go < join stress < join noise
 
-(f) sigma is read host-side and handed over as a runtime field, never left for
-the compiler to fold.
+(f) sigma is a runtime field.
   $ grep -c '_sa\[_e\].pattern          = (uint32_t)HET_CPU_STRESS_PATTERN;' $MP.cu
   1
 
-(h) the device half of the noise runs as extra blocks of the persistent grid,
-never as a second __global__.
+(h) the device half of the noise runs as extra blocks of the persistent grid.
   $ grep -c '__global__' $MP.cu
   1
   $ grep -c 'blockIdx.x < HET_TEST_BLOCKS + _noise_blocks' $MP.cu
@@ -110,8 +96,7 @@ never as a second __global__.
   $ grep -c 'if (pthread_create(&_nth\[_t\], NULL, het_cpu_noise, &_na\[_t\]) == 0) _cpu_noise_n++;' $MP.cu
   1
 
-The host half is HET_CPU_NOISE_THREADS threads over equal disjoint slices, each
-one subtracted from the stress-thread budget.
+The host half is HET_CPU_NOISE_THREADS threads over disjoint slices.
   $ grep -c '_nCpuStress = _ncores - _nCpuTest - HET_CPU_NOISE_THREADS - HET_CPU_RESERVE_CORES;' $MP.cu
   1
   $ grep -c 'int _stress_core0 = HET_CPU_FIRST_CORE + _nCpuTest + HET_CPU_NOISE_THREADS;' $MP.cu
@@ -127,8 +112,7 @@ Both noise halves are off unless the build asks for them.
   $ grep -A1 '#ifndef HET_GPU_NOISE_BLOCKS' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_GPU_NOISE_BLOCKS 0'
   1
 
-The working set is derived from HET_NOISE_MB and guarded against the last-level
-cache: below it the buffer is served from cache and stresses nothing.
+The working set comes from HET_NOISE_MB and is checked against the last-level cache.
   $ grep -c 'uint64_t _noise_words = (uint64_t)HET_NOISE_MB \* 1024ull \* 1024ull / sizeof(uint64_t);' $MP.cu
   1
   $ grep -A1 '#ifndef HET_NOISE_MB' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_NOISE_MB 8192'
@@ -146,15 +130,13 @@ cache: below it the buffer is served from cache and stresses nothing.
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MPH.hip
   1
 
-(h3) without pageable-memory access the noise buffer is refused, and an accepted
-one is a system malloc.
+(h3) without pageable-memory access the noise buffer is refused.
   $ sed -n '/^  if (!_shared_pageable()) {/,/^  }$/p' $MP.cu | grep -c 'return -1'
   1
   $ sed -n '/^static int gd_alloc_noise/,/^}$/p' $MP.cu | grep -c '\*_pp = malloc(_bytes);'
   1
 
-(i) every counter of this layer is REPORTED, because a mechanism that has
-silently stopped working looks exactly like one that is working.
+(i) every counter of this layer is reported.
   $ grep -c 'HetLitmus WARNING: %d CPU stress thread(s) were spawned but completed ZERO rounds' $MP.cu
   1
   $ grep -c 'ZERO preload hints were issued' $MP.cu
@@ -168,22 +150,19 @@ silently stopped working looks exactly like one that is working.
   $ grep -c '_rec.noise_ws_mb = (uint32_t)HET_NOISE_MB' $MP.cu
   1
 
-(i2) the two noise halves are requested by their knobs, not by what survived
-allocation, so a refused half reads as requested-but-dead.
+(i2) the noise halves are requested by their knobs, not by what was allocated.
   $ grep -c '| ((HET_CPU_NOISE_THREADS > 0) ? HET_REQ_CPU_NOISE : 0u)' $MP.cu
   1
   $ grep -c '| ((_noiseBlocks > 0) ? HET_REQ_GPU_NOISE : 0u);' $MP.cu
   1
 
-(i3) the preload is requested only where the host has cache primitives, off
-the field the driver writes from het_cpu_preload_live().
+(i3) preload counts as requested only on a host where it can run.
   $ grep -c '_ct.preload_inert = !het_cpu_preload_live();' $MP.cu
   1
   $ grep -c '((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u)' $MP.cu
   1
 
-(k) a shape whose outcome carries a location column has one kind of CPU thread
-only, and that thread preloads.
+(k) a shape with a location column has one kind of CPU thread, which preloads.
   $ grep -cE '^static void\* cpu_[A-Za-z_0-9]+\(void\* _a\)' $S.cu
   1
   $ grep -cE '^static void\* cpu_thread_P[0-9]+\(void\* _a\)' $S.cu

@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""One emitted CUDA harness carries exactly the memory ops its .litmus
-annotates, read off `nvcc --ptx' with no GPU and no kernel launch
-(hetlitmus/docs/faithfulness.md).  Per test:
-  1. the ordered inline-asm PTX op stream == the .litmus (kind, order, scope);
-     on a het test each lane's ops follow its rendezvous arrival and poll
-  2. no system-scope op outside the inline-asm stream
-  3. (het) the CPU column's mnemonics == the emitted _cpu.c asm block
+"""One emitted CUDA harness carries exactly the memory ops its .litmus annotates.
 Exit 0 PASS, 1 FAIL (per-position diff), 2 an annotation outside the tables,
 3 error.  --ptx reads a frozen PTX instead of emitting and compiling.
 """
@@ -24,25 +18,20 @@ LITMUS7 = os.path.join(REPO, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(REPO, "litmus", "libdir")
 NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
 
-# ---- the tables; a token outside them hard-fails (exit 2) ----------------
 GPU_ORDER = {"relaxed": "relaxed", "acquire": "acquire", "release": "release",
-             "acqrel": "acq_rel", "sc": "sc"}         # LISA tag -> PTX token
-GPU_SCOPE = ("cta", "gpu", "sys")                     # spelt alike both sides
+             "acqrel": "acq_rel", "sc": "sc"}
+GPU_SCOPE = ("cta", "gpu", "sys")
 GPU_KIND = {"w": "st", "r": "ld", "f": "fence"}
 # An sc access is the scope's fence.sc, then the access [CCCL cuda_ptx_generated.h].
 SC_ACCESS = {"st": "relaxed", "ld": "acquire"}
-# AArch64 memory and ordering mnemonics; `mov' is recognised and skipped.
 CPU_MEM = ("str", "ldr", "stlr", "ldar", "ldapr", "dmb")
-DMB_OPTION = ("sy", "st", "ld")     # a barrier's ordered pairs live in its option
-# A het lane's rendezvous as libcu++ lowers het_rdv_device: arrival, then poll.
+DMB_OPTION = ("sy", "st", "ld")
 RDV = [("atom", "relaxed", "sys"), ("ld", "relaxed", "sys")]
 
 
 class CompletenessError(Exception):
     """An annotation token that is not in the tables."""
 
-
-# ---- .litmus parsing (hipsrccheck.py and covercheck.py import it) ----------
 
 GPU_CELL = re.compile(r'^([wrf])\[([a-z_]+)\s*,\s*([a-z]+)\]')
 PROC = re.compile(r'^P(\d+)(?::(\w+))?$')
@@ -54,7 +43,6 @@ def read_litmus(path):
 
 
 def litmus_kind(text):
-    """'LISA' (gpu-only) or 'Het', the first header word."""
     return text.split()[0]
 
 
@@ -63,8 +51,6 @@ def litmus_name(text):
 
 
 def parse_body(text):
-    """([(proc_index, device_tag)] in column order, the grid rows); an
-    untagged column is gpu on a LISA test and hard-fails on a Het one."""
     lines = text.splitlines()
     hdr = next((i for i, ln in enumerate(lines) if re.match(r'^\s*P\d+\b', ln)), None)
     if hdr is None:
@@ -89,7 +75,6 @@ def parse_body(text):
 
 
 def device_class(dev):
-    """'gpu' or 'cpu' for a column device tag."""
     if dev.lower() == 'gpu':
         return 'gpu'
     if dev.lower() in ('cpu', 'x86_64'):
@@ -98,7 +83,6 @@ def device_class(dev):
 
 
 def gpu_ops(cells):
-    """A GPU column's cells as (kind, order, scope) in PTX spelling."""
     ops = []
     for c in filter(None, (c.strip() for c in cells)):
         m = GPU_CELL.match(c)
@@ -112,7 +96,6 @@ def gpu_ops(cells):
 
 
 def cpu_op(mn, opts, where):
-    """One AArch64 instruction as its mnemonic, `dmb <option>', or None (mov)."""
     if mn == "mov":
         return None
     if mn not in CPU_MEM:
@@ -125,7 +108,6 @@ def cpu_op(mn, opts, where):
 
 
 def cpu_ops(cells):
-    """A CPU column's memory and ordering ops, in order."""
     ops = []
     for c in filter(None, (c.strip() for c in cells)):
         toks = c.replace(',', ' ').lower().split()
@@ -136,7 +118,6 @@ def cpu_ops(cells):
 
 
 def instance_of(path):
-    """One .litmus as dict(name, kind, pattern, gpu=[(proc, ops)], cpu=[...])."""
     text = read_litmus(path)
     procs, rows = parse_body(text)
     cols = [[row[c] if c < len(row) else '' for row in rows] for c in range(len(procs))]
@@ -149,7 +130,6 @@ def instance_of(path):
 
 
 def ptx_profile(ops):
-    """The PTX stream of a column: an sc access is its fence + access."""
     out = []
     for kind, order, scope in ops:
         if order == "sc" and kind in SC_ACCESS:
@@ -159,16 +139,12 @@ def ptx_profile(ops):
     return out
 
 
-# ---- emit (.litmus -> kernel source [+ _cpu.c]) and compile (-> PTX) ------
-
 def run(cmd):
     return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           text=True)
 
 
 def emit_harness(litmus_path, outdir, target="cuda"):
-    """litmus7 -gpu-target <target> into outdir: (kernel source, _cpu.c or
-    None).  gpu-only: <outdir>/<name>.<ext>; het: <outdir>/<name>/<name>.<ext>."""
     name = litmus_name(read_litmus(litmus_path))
     ext = {"cuda": ".cu", "hip": ".hip"}[target]
     r = run([LITMUS7, "-gpu-target", target, "-set-libdir", LIBDIR,
@@ -185,23 +161,17 @@ def emit_harness(litmus_path, outdir, target="cuda"):
 
 
 def compile_ptx(cu_path, ptx_path, flags=()):
-    # sm_90: the arch the emitted comp.sh builds with (litmus/hetDialect.ml).
     r = run([NVCC, "-std=c++17", "-arch=sm_90", "--ptx"] + list(flags)
             + ["-o", ptx_path, cu_path])
     if r.returncode != 0 or not os.path.exists(ptx_path):
         raise RuntimeError("nvcc --ptx failed for %s:\n%s" % (cu_path, r.stdout))
 
 
-# ---- the observed streams ---------------------------------------------------
-
 OPLINE = re.compile(r'^\s*(ld|st|atom|red|fence|membar)\.([a-z0-9_.]+)')
 PTX_ORDERS, PTX_SCOPES = set(GPU_ORDER.values()), set(GPU_SCOPE)
 
 
 def ptx_ops(ptx_text):
-    """(the inline-asm ops as (kind, order, scope) in textual order, the
-    system-scope op lines outside inline asm).  An asm line carrying no order
-    token is scaffolding, not an op."""
     ops, stray, in_asm = [], [], False
     for s in map(str.strip, ptx_text.splitlines()):
         if s.startswith('// begin inline asm') or s.startswith('// end inline asm'):
@@ -225,15 +195,12 @@ ASM_STR = re.compile(r'"\s*([a-zA-Z][a-zA-Z0-9.]*)([^"]*)\\n"')
 
 
 def cpu_asm_ops(cpu_c_text):
-    """The memory and ordering ops of the __aarch64__ asm block, in order;
-    ASM_STR's leading letter skips litmus7's `#' marker literals."""
     lines = cpu_c_text.splitlines()
     start = next((i for i, ln in enumerate(lines) if '__aarch64__' in ln), 0)
     ops = []
     for ln in lines[start:]:
         if ln.strip().startswith('#else'):
             break
-        # finditer: C concatenates adjacent literals, so one line may carry two.
         for m in ASM_STR.finditer(ln):
             op = cpu_op(m.group(1).lower(),
                         m.group(2).lower().replace(',', ' ').split(), "_cpu.c")
@@ -242,10 +209,7 @@ def cpu_asm_ops(cpu_c_text):
     return ops
 
 
-# ---- the checks -------------------------------------------------------------
-
 def diff(expected, observed, fmt):
-    """One line per position where the two streams differ."""
     out = []
     for i in range(max(len(expected), len(observed))):
         e = fmt(expected[i]) if i < len(expected) else "<none>"
@@ -257,7 +221,6 @@ def diff(expected, observed, fmt):
 
 
 def check(litmus_path, ptx_override=None):
-    """(name, kind, the FAIL lines) for one .litmus; no line means PASS."""
     inst = instance_of(litmus_path)
     het = inst['kind'] == 'Het'
     expected = []

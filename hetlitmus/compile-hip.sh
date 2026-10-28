@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Compile-check the emitted .hip litmus kernels with hipcc/amdclang for gfx942
-# (MI300A).  Nothing is launched; what a clean compile does and does NOT
-# establish, and why the HIP-Clang stack rather than HIP-over-CUDA:
-# hetlitmus/docs/gpu-emitters.md "HIP compile".
-#
+# Compile-check the emitted .hip kernels for gfx942 (default); nothing is launched.
 # Usage:  ./compile-hip.sh [INDIR] [OUTDIR]   (default ./hip-out,
 #           $RESULTS/hip-compile; RESULTS default run-out/<date>-<host>)
 #         HIPCC=<path>   compiler (default: hipcc on PATH, else /opt/rocm/bin)
@@ -13,14 +9,11 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
 HIP_ARCH="${HIP_ARCH:-gfx942}"
 INDIR="${1:-$HETL/hip-out}"
-# The results-dir default is spelled as build.sh and probe-hip.sh spell it, so
-# the steps of one run share a dir (hetlitmus/docs/het-emission.md).
 RESULTS="${RESULTS:-$HETL/run-out/$(date +%Y%m%d)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )}"
 OUTDIR="${2:-$RESULTS/hip-compile}"
 
 HIPCC="${HIPCC:-}"
 if [ -n "$HIPCC" ]; then
-  # command -v alone resolves a builtin or function, which compiles nothing.
   [ -x "$(command -v "$HIPCC" 2>/dev/null || true)" ] || {
     echo "error: HIPCC=$HIPCC is not an executable" >&2
     exit 1
@@ -30,7 +23,7 @@ else
   [ -x "$HIPCC" ] || HIPCC=""
   if [ -z "$HIPCC" ] && [ -x /opt/rocm/bin/hipcc ]; then HIPCC=/opt/rocm/bin/hipcc; fi
   if [ -z "$HIPCC" ]; then
-    echo "error: hipcc not found -- install ROCm/HIP (see hetlitmus/docs/gpu-emitters.md)" >&2
+    echo "error: hipcc not found -- install ROCm/HIP" >&2
     exit 1
   fi
 fi

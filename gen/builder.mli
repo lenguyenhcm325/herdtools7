@@ -56,8 +56,6 @@ module type S = sig
 (* Dump the given test *)
   val dump_test_channel : out_channel -> test -> unit
 
-(* HetLitmus: the test as device-neutral string fragments, for merging
-   per-proc columns from two single-arch runs.  See gen/hetCells.ml. *)
   val het_cells : test -> HetCells.t
 
 end

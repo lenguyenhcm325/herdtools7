@@ -1,8 +1,6 @@
-Slot + readout guard (hetlitmus/docs/environment-design.md "Rendezvous";
-hetlitmus/docs/het-emission.md).
+Slot + readout guard.
 
-The slot layout ships with the harness and is what every address is offset by:
-one 128 B line per slot, so two iterations share neither a word nor a line.
+One 128 B line per slot.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-plain.rlx.litmus >/dev/null 2>&1
   $ grep -c '#define HET_SLOT_STRIDE_WORDS 32' MP-cg-sys-plain.rlx/het_rdv.h
   1
@@ -11,13 +9,11 @@ one 128 B line per slot, so two iterations share neither a word nor a line.
   $ grep -c 'int \*x; gd_alloc_shared((void\*\*)&x, sizeof(int)\*SIZE_OF_TEST\*HET_SLOT_STRIDE_WORDS);' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-The per-run reset clears every slot, which is also what first-touches the pages
-the run is about to race on.
+The per-run reset clears every slot.
   $ grep -c 'memset(x, 0, sizeof(int)\*SIZE_OF_TEST\*HET_SLOT_STRIDE_WORDS);' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-The GPU lane addresses iteration _n's own slot; the CPU body is litmus7's own
-and addresses a bare pointer, so its CALLER does the addressing.
+The GPU lane addresses slot _n; the CPU body's caller does the addressing.
   $ grep -c 'cuda::atomic_ref<int, cuda::thread_scope_system> ref(\*(y + (_n)\*HET_SLOT_STRIDE_WORDS));' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
   $ grep -c 'size_t _slot = (size_t)_n \* HET_SLOT_STRIDE_WORDS;' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
@@ -27,8 +23,7 @@ and addresses a bare pointer, so its CALLER does the addressing.
   $ grep -c '#START _litmus_P0' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx_cpu.c
   1
 
-A GPU lane carries its ops in column order, each with location, value or
-destination register, order and scope, and the register feeds the read buffer.
+A GPU lane carries its ops in column order, with order and scope.
   $ litmus7 -gpu-target cuda -o . ../het/R-cg-sys-plain.fsc.litmus >/dev/null 2>&1
   $ sed -n '/{ \/\/ w\[relaxed,sys\] y 2$/,/bufP1_0\[_n\] = r0;/p' R-cg-sys-plain.fsc/R-cg-sys-plain.fsc.cu
         { // w[relaxed,sys] y 2
@@ -42,8 +37,7 @@ destination register, order and scope, and the register feeds the read buffer.
         }
         bufP1_0[_n] = r0;
 
-Every outcome column prints a NUMBER, in one loop over all of them, pinned here
-on the shape whose every column is a location.
+Every outcome column prints a number.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-plain.fsc.litmus >/dev/null 2>&1
   $ sed -n '/^static void _dump_one/,/^}$/p' 2+2W-cg-sys-plain.fsc/2+2W-cg-sys-plain.fsc.cu
   static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
@@ -52,15 +46,13 @@ on the shape whose every column is a location.
     fprintf(_ch, "\n");
   }
 
-A register column is its read buffer at _n, carrying the value the load
-returned, so a condition value is compared as the .litmus writes it.
+A register column is its read buffer at _n.
   $ grep -c 'int _weak = ((_o\[0\] == 1) && (_o\[1\] == 0));' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
   $ grep -c '_o\[0\] = (intmax_t)bufP1_0_h\[_n\];' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-One flag buffer per participant, one byte per iteration, each written by the
-side that owns it and the GPU's mirrored back for the readout.
+Each thread records, per iteration, whether it reached the rendezvous before its cap.
   $ grep -c 'uint8_t \*_rdvG_P1; gd_alloc_dev((void\*\*)&_rdvG_P1, sizeof(uint8_t)\*SIZE_OF_TEST, "_rdvG_P1");' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
   $ grep -c 'uint8_t \*_rdvC_P0 = (uint8_t\*)malloc_check(sizeof(uint8_t)\*SIZE_OF_TEST);' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
@@ -68,8 +60,7 @@ side that owns it and the GPU's mirrored back for the readout.
   $ grep -c 'cudaMemcpy(_rdvG_P1_h, _rdvG_P1, sizeof(uint8_t)\*SIZE_OF_TEST, cudaMemcpyDeviceToHost);' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-The readout ANDs the flags before it reads a single slot: an iteration only one
-side started is DISCARDED, and rdv_valid says the readout ran at all.
+The readout checks every flag before reading a slot.
   $ sed -n '/for (int _n=0; _n<SIZE_OF_TEST; ++_n) {/,/^    }$/p' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu | sed -n '/int _ok = 1;/,/_rec.iters_scored++;/p'
         int _ok = 1;
         if (!_rdvC_P0[_n]) { _ok = 0; _rec.rdv_cap_cpu++; }
@@ -79,22 +70,19 @@ side started is DISCARDED, and rdv_valid says the readout ran at all.
   $ grep -c '_rec.rdv_valid = 1;' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-...and the run says on stderr what the rendezvous cost it, beside the caps it
-waited under and whether those caps are a measurement at all.
+The run reports the rendezvous cost and its caps on stderr.
   $ grep -c 'HetLitmus rendezvous: scored=%llu discarded=%llu (cap_cpu=%llu cap_gpu=%llu) caps=%lu/%u jitter=%d discard_max=%d%% %s' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
   $ grep -c 'HET_CAP_CALIBRATED ? "caps calibrated" : "caps UNCALIBRATED"' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-Both caps are read from the environment at run time, so a box is re-capped
-without a rebuild.
+Both caps are read from the environment at run time.
   $ grep -c 'het_env_long("HET_CAP_CPU", (long)HET_CAP_CPU)' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
   $ grep -c 'het_env_long("HET_CAP_GPU", (long)HET_CAP_GPU)' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-LDAPR is RCpc (ARMv8.3), so the emitted build files carry the flag on every
-compilation of <t>_cpu.c or every test with a CPU `ra' order fails to ASSEMBLE.
+Every compilation of <t>_cpu.c carries the LDAPR flag.
   $ litmus7 -gpu-target cuda -o . ../het/CoRR-cg-sys-ra.rel.litmus >/dev/null 2>&1
   $ grep -c 'ldapr ' CoRR-cg-sys-ra.rel/CoRR-cg-sys-ra.rel_cpu.c
   2
@@ -107,18 +95,15 @@ compilation of <t>_cpu.c or every test with a CPU `ra' order fails to ASSEMBLE.
   $ grep -c '$(CC) $(HET_HOST_CFLAGS) -c $< -o $@' CoRR-cg-sys-ra.rel/Makefile
   1
 
-The Makefile hands those flags to the host object only where `uname -m` is this
-render's own ISA.
+The Makefile passes those flags only on this render's own ISA.
   $ grep -c 'HET_HOST_CFLAGS := $(if $(filter aarch64,$(shell uname -m)),$(HET_CPU_CFLAGS))' CoRR-cg-sys-ra.rel/Makefile
   1
 
-Each render's CPU file compiles for its own ISA only: the #else branch is an
-#error naming that ISA, and off its host comp.sh cross-assembles the file.
+Each render's CPU file compiles for its own ISA only.
   $ grep -c '#error "CoRR-cg-sys-ra.rel_cpu.c carries AArch64 asm and compiles only where uname -m is aarch64; cross-assemble it elsewhere with clang --target=aarch64-linux-gnu"' CoRR-cg-sys-ra.rel/CoRR-cg-sys-ra.rel_cpu.c
   1
 
-The x86_64 pair owes no extension flag, and the variable is still there: an
-empty default is a flag list, not a missing one.
+The x86_64 pair has an empty CPU flag default.
   $ litmus7 -gpu-target hip -o . ../het-x86_64/MP-cg-sys-plain.rlx-x86_64.litmus >/dev/null 2>&1
   $ grep -c 'HET_CPU_CFLAGS="${HET_CPU_CFLAGS:-}"' MP-cg-sys-plain.rlx-x86_64/comp.sh
   1
@@ -127,8 +112,7 @@ empty default is a flag list, not a missing one.
   $ grep -c 'clang --target=x86_64-linux-gnu -std=gnu11 $HET_CPU_CFLAGS -c' MP-cg-sys-plain.rlx-x86_64/comp.sh
   1
 
-REFUSAL (a): an atom no outcome column backs has no slot to read, so the
-emitter refuses -- exit 3, with nothing written.
+REFUSAL (a): an atom no outcome column backs is refused, exit 3.
   $ cat > unbacked-loc.litmus <<'EOF'
   > Het UNBACKED-LOC
   > "a condition naming a location no proc touches"
@@ -148,8 +132,7 @@ emitter refuses -- exit 3, with nothing written.
   $ test -d UNBACKED-LOC && echo "a refusal left a harness behind" || echo "nothing written"
   nothing written
 
-REFUSAL (b): a constant weak-behaviour detector reports the same verdict on
-every run, so the emitter refuses that too, matched on the words only it prints.
+REFUSAL (b): a constant weak-outcome detector is refused.
   $ cat > const-true.litmus <<'EOF'
   > Het CONST-TRUE
   > "a condition that decides nothing, always true"
@@ -183,8 +166,7 @@ every run, so the emitter refuses that too, matched on the words only it prints.
   $ litmus7 -gpu-target cuda -o . const-false.litmus >/dev/null 2>&1
   [3]
 
-The fold runs under `not' and `=>' as well, so a constant reached through either
-is refused with the same two values.
+The constant fold also runs under `not' and `=>'.
   $ sed 's/CONST-TRUE/NOT-TRUE/; s/exists (true)/exists (not (true))/' const-true.litmus > not-true.litmus
   $ litmus7 -gpu-target cuda -o . not-true.litmus 2>&1 | grep -c 'would emit a CONSTANT weak-behaviour detector (_weak = 0)'
   1
@@ -203,8 +185,7 @@ is refused with the same two values.
   $ ls -d CONST-TRUE CONST-FALSE NOT-TRUE NOT-FALSE IMPL-CONST 2>/dev/null | wc -l
   0
 
-The standalone GPU-only path is untouched by any of it: plain int atomic_ref on
-one word per location, no slots, no record, no readout.
+The GPU-only path has no slots, record or readout.
   $ litmus7 -gpu-target cuda -o . ../gpu-only/MP-sys-acq.litmus >/dev/null 2>&1
   $ grep -q 'atomic_ref<int' MP-sys-acq.cu && echo "gpu-only uses plain int"
   gpu-only uses plain int

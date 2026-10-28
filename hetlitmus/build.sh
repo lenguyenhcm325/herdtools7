@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# Build every harness dir of EMIT: `make clean' then `make <vendor>-bin' in each,
-# with the device arch exported.  The clean is NOT optional -- a `-D' knob
-# touches no source, so make alone would keep objects built with the old knobs.
-# Each worker writes $RESULTS/build/<t>.log and <t>.rc; the failure table is
-# tabulated from the .rc files, since xargs reports 123 rather than a count.
-#
+# Build every harness dir of EMIT, always with `make clean' first.
 # usage: build.sh EMIT [--tests LIST|FILE] [--arch A] [-j N]
 # Exit: 0 = every dir built; 1 = one did not; 2 = bad argument, arch or toolchain.
 set -euo pipefail
@@ -37,9 +32,8 @@ RESULTS="${RESULTS:-$HETL/run-out/$(date +%Y%m%d)-$( (hostname -s 2>/dev/null ||
 mkdir -p "$RESULTS/build"
 RESULTS="$(cd "$RESULTS" && pwd)"
 
-# --tests as a comma list or as a file with one name per line, `#' and blanks
-# ignored -- the first field of a line is the name.
-name_list() {                   # <LIST|FILE>
+# --tests: a comma list, or a file of one name per line (`#' and blanks ignored).
+name_list() {
   if [ -f "$1" ]; then
     awk 'NF && $1 !~ /^#/ { print $1 }' "$1"
   else
@@ -57,8 +51,6 @@ else
 fi
 [ -n "$LIST" ] || refuse "no harness dir under $EMIT -- emit the corpus first"
 
-# The vendor is the render each dir carries, and one run builds one vendor: the
-# arch is a single value and the two dialects do not share a spelling for it.
 VENDOR=""
 for t in $LIST; do
   d="$EMIT/$t"
@@ -85,15 +77,10 @@ else
   COMPILER="${HIPCC:-hipcc}" ; ARCH_VAR=HIP_ARCH ; ARCH_RE='^gfx[0-9a-f]+$'
   ARCH_SHAPE='gfxXXX' ; PROBE_KEY=suggested_hip_arch
 fi
-# The compiler variable may carry flags (`NVCC="nvcc -DHET_LLC_MB=256"'), which
-# make expands into the command line: only its first word is a program name.
 CBIN="${COMPILER%% *}"
-# command -v alone resolves a builtin or function, which compiles nothing.
 [ -x "$(command -v "$CBIN" 2>/dev/null || true)" ] \
   || refuse "$CBIN does not resolve to an executable, and the $VENDOR harnesses are built with it"
 
-# The probe is the ONLY other source of an arch, and it writes literal NONE and
-# AMBIGUOUS(...) values, which the shape check below rejects like any other.
 PROBE="$RESULTS/probe.txt"
 if [ -n "$ARCH" ]; then
   ARCH_SOURCE="explicit (--arch)"
@@ -114,7 +101,7 @@ CVER="$( { "$CBIN" --version 2>/dev/null || true ; } \
 [ -n "$CVER" ] || CVER="$( { "$CBIN" --version 2>/dev/null || true ; } | sed -n '1p' )"
 [ -n "$CVER" ] || CVER="unknown"
 
-build_one() {                   # <test> -- one dir, its own log and its own .rc
+build_one() {
   t="$1" ; rc=0
   ( cd "$BUILD_EMIT/$t" && export "$BUILD_ARCH_VAR=$BUILD_ARCH" \
       && make clean && make "$BUILD_VENDOR-bin" ) \

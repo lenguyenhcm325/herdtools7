@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
-# Emit the GPU-only litmus kernels from the scoped LISA corpus (the built tree
-# $GPU_CORPUS, paths.sh).  litmus7 parses the scoped Bell IR and renders the
-# ONE dialect `-gpu-target' names, .cu (CudaLang) or .hip (HipLang), so covering
-# both vendors takes two passes -- what the TARGET OUTDIR pairs are for.  litmus7
-# has no default target, and neither has this script.  It also drops its
-# C-runtime boilerplate beside the kernels; each output dir's .gitignore keeps
-# only its own dialect.  hetlitmus/docs/{cuda,hip}-emitter.md.
+# Emit the GPU-only kernels of $GPU_CORPUS in the dialect each TARGET names.
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
@@ -35,6 +29,5 @@ while [ "$#" -gt 0 ]; do
     "$LITMUS7" -gpu-target "$TARGET" -set-libdir "$LIBDIR" -o "$OUTDIR" "$t" >/dev/null
   done
   echo "Emitted:"
-  # the vendor->extension map lives in the emitter, so the absent one is no error
   ls -1 "$OUTDIR"/*.cu "$OUTDIR"/*.hip 2>/dev/null || true
 done

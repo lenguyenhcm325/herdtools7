@@ -1,16 +1,12 @@
-Unit spec of the corpus rule functions in tests/grid.py
-(hetlitmus/docs/corpus-grid.md).
+Unit spec of the corpus rule functions in tests/grid.py.
 
-Each call is one Python expression over grid's functions; the helper prints
-its value, or a refusal's message with exit 1.
   $ g () { PYTHONDONTWRITEBYTECODE=1 python3 -c "
   > import sys; sys.path.insert(0, '..'); import grid; from grid import *
   > try: print($1)
   > except grid.GridError as e: print(e); sys.exit(1)
   > "; }
 
-render_gpu -- the GPU/Bell annotator, one line per order, scope varied so all
-of Sys/Gpu/Cta appear.  rlx: every access Relaxed.
+render_gpu: rlx makes every access Relaxed.
   $ g 'render_gpu("sys", "rlx", "PodWW Rfe PodRR Fre")'
   PodWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys PodRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
 acq: reads -> Acquire, writes -> Relaxed.
@@ -25,8 +21,7 @@ ra: reads -> Acquire AND writes -> Release.
 sc: every access Sc.
   $ g 'render_gpu("sys", "sc", "PodWW Rfe PodRR Fre")'
   PodWWScSysScSys RfeScSysScSys PodRRScSysScSys FreScSysScSys
-The fence orders keep every access Relaxed and spell a standalone fence edge on
-each intra-proc Pod<XY>, at the cell's scope.
+Fence orders keep accesses Relaxed and add a fence edge per Pod<XY>.
   $ g 'render_gpu("cta", "fsc", "PodWW Rfe PodRR Fre")'
   FenceScCtadWWRelaxedCtaRelaxedCta RfeRelaxedCtaRelaxedCta FenceScCtadRRRelaxedCtaRelaxedCta FreRelaxedCtaRelaxedCta
   $ g 'render_gpu("sys", "fsc", "PodWR Fre PodWR Fre")'
@@ -37,8 +32,7 @@ each intra-proc Pod<XY>, at the cell's scope.
   FenceReleaseSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceReleaseSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
   $ g 'render_gpu("cta", "fra", "PodWR Fre PodWR Fre")'
   FenceAcqrelCtadWRRelaxedCtaRelaxedCta FreRelaxedCtaRelaxedCta FenceAcqrelCtadWRRelaxedCtaRelaxedCta FreRelaxedCtaRelaxedCta
-Same-location program order: a Pos<XY> edge carries its location letter into the
-fence spelling (Fence<O><Scope>s<XY>), and reaches an access order unchanged.
+A Pos<XY> edge carries its location letter into the fence spelling.
   $ g 'render_gpu("sys", "fsc", "Rfe PosRR Fre")'
   RfeRelaxedSysRelaxedSys FenceScSyssRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
   $ g 'render_gpu("sys", "acq", "Rfe PosRR Fre")'
@@ -51,7 +45,7 @@ An order or a scope outside the tables is refused.
   bad scope: cluster (one of: cta gpu sys)
   exit 1
 
-render_cpu -- the CPU renderer, by ISA profile.  aarch64 plain: the bare cycle.
+render_cpu: aarch64 plain is the bare cycle.
   $ g 'render_cpu("aarch64", "plain", "PodWR Fre PodWR Fre")'
   PodWR Fre PodWR Fre
 ra: read -> LDAPR (Q), write -> STLR (L).
@@ -70,16 +64,14 @@ st / ld: the partial barriers.
   DMB.STdWR Fre DMB.STdWR Fre
   $ g 'render_cpu("aarch64", "ld", "PodWR Fre PodWR Fre")'
   DMB.LDdWR Fre DMB.LDdWR Fre
-x86_64: plain is the bare cycle; mf is MFence on each intra-proc edge, the
-location letter kept.
+x86_64: plain is the bare cycle; mf is MFence on each intra-proc edge.
   $ g 'render_cpu("x86_64", "plain", "PodWR Fre PodWR Fre")'
   PodWR Fre PodWR Fre
   $ g 'render_cpu("x86_64", "mf", "PodWR Fre PodWR Fre")'
   MFencedWR Fre MFencedWR Fre
   $ g 'render_cpu("x86_64", "mf", "PosWR Fre Coe")'
   MFencesWR Fre Coe
-An ISA with no profile is refused, not rendered bare; so is an order outside
-the ISA's profile.
+An ISA with no profile, or an order outside it, is refused.
   $ g 'render_cpu("riscv", "mf", "PodWR Fre PodWR Fre")'; echo "exit $?"
   unknown cpu arch: riscv (one of: aarch64 x86_64)
   exit 1
@@ -93,14 +85,13 @@ cut_tag -- device-cut abbreviation, 2-proc and 3-proc.
   $ g 'cut_tag("gpu,cpu,cpu")'
   gcc
 
-scope_tree -- the parseable scopes: tree (each proc its own CTA), 2-proc and 3-proc.
+scope_tree: one CTA per proc.
   $ g 'scope_tree(2)'
   (sys (gpu (cta 0) (cta 1)))
   $ g 'scope_tree(3)'
   (sys (gpu (cta 0) (cta 1) (cta 2)))
 
-cut_classes -- every cpu/gpu assignment but all-cpu and all-gpu, reduced by the
-segment rotations that fix the cycle.  SB: one segment twice, so one class.
+cut_classes: SB is one segment twice, so one class.
   $ g '" ".join(cut_classes("PodWR Fre PodWR Fre"))'
   cg
 MP: two different segments, so both cuts.
@@ -109,10 +100,9 @@ MP: two different segments, so both cuts.
 IRIW: invariant under rotation by two procs, so each class is that orbit.
   $ g '" ".join(cut_classes("Rfe PodRR Fre Rfe PodRR Fre"))'
   cccg ccgc ccgg cgcg cggc cggg gcgc gcgg
-WRC opens with an external edge, whose single-access proc is the last one (P2),
-and has no symmetry.
+WRC has no symmetry.
   $ g '" ".join(cut_classes("Rfe PodRW Rfe PodRR Fre"))'
   ccg cgc cgg gcc gcg ggc
-3.2W: one segment three times, so rotation by one proc fixes it: two classes.
+3.2W: all three threads have the same shape.
   $ g '" ".join(cut_classes("PodWW Coe PodWW Coe PodWW Coe"))'
   ccg cgg

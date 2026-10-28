@@ -1,13 +1,8 @@
 #!/bin/sh
-# The CUDA probe driver: run probe.cu, add the host facts CUDA cannot see, and
-# write <results>/probe.txt as key=value lines.  None of it is a litmus result.
-#
+# Probe the CUDA box: run probe.cu and write $RESULTS/probe.txt as key=value lines.
 #   sh probe-cuda.sh                 # run-out/<date>-<host>/probe.txt
 #   RESULTS=... sh probe-cuda.sh     # somewhere else
-#
-# Builds compute_75 PTX and JITs at load, so one command works before the arch
-# is known; NEVER `-arch=native'
-# (hetlitmus/docs/het-emission.md, "The pair a harness names").
+# Built as generic compute_75 PTX, so it runs before the GPU's arch is known.
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -27,8 +22,7 @@ emit "host_uname_r=$(uname -r)"
 emit "host_uname_s=$(uname -s)"
 emit "host_nproc=$( (nproc 2>/dev/null || echo -1) )"
 
-# AArch64 flags the CPU side needs: `lrcpc' is LDAPR and `atomics' is LSE.  An
-# x86 host has no such line, so the keys read 0 and either box's probe.txt diffs.
+# AArch64 flags the CPU side needs: `lrcpc' is LDAPR and `atomics' is LSE.
 if [ -r /proc/cpuinfo ]; then
   feats="$(grep -m1 -E '^(Features|flags)' /proc/cpuinfo 2>/dev/null | cut -d: -f2- || true)"
 else
@@ -43,7 +37,6 @@ for f in lrcpc lrcpc2 atomics asimd sve; do
 done
 emit "cpu_model=$(grep -m1 -E '^(model name|CPU part|Model)' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//' || echo unknown)"
 
-# command -v alone resolves a builtin or function, which is no toolchain.
 if [ -x "$(command -v "$NVCC" 2>/dev/null || true)" ]; then
   emit "nvcc=$($NVCC --version | grep -o 'release [0-9.]*' | head -1)"
 else

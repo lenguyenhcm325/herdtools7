@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""The campaign scheduler: where the hardware hours are spent, or saved.
-
-One policy for every row, no harness carrying a prediction: a clean sighting ends it,
-else its budget does -- pooled here, and inside one invocation by HET_STOP_AT_SIGHTING=1.
-hetlitmus/docs/environment-design.md "Aggregate"; the four steps a results
-dir is built by, hetlitmus/docs/het-emission.md "From a corpus to a results dir".
-One invocation is `./<test>' run in its own harness dir under `--timeout'; the
-HetStats line it prints on stdout is the whole interface.
+"""Run a campaign: invoke each harness until its stop rule fires.
 Exit: 0 = completed; 2 = configuration/corpus error; 1 = a test errored.
 """
 
@@ -18,8 +11,8 @@ import subprocess
 import sys
 import time
 
-# A prime stride far above any plausible NUMBER_OF_RUN: the harness consumes
-# base + run, so bases never collide across invocations of one test.
+# Invocation i seeds its runs from seed0 + i * SEED_STRIDE; the stride exceeds
+# any run count, so no two runs share a seed.
 SEED_STRIDE = 100003
 
 def die(msg):
@@ -28,7 +21,6 @@ def die(msg):
 
 
 def corpus_tests(corpus):
-    """The tests to schedule: one row per emitted harness dir."""
     if not os.path.isdir(corpus):
         die("--corpus %s is not a directory" % corpus)
     tests = sorted(d for d in os.listdir(corpus)
@@ -40,8 +32,7 @@ def corpus_tests(corpus):
 
 
 def parse_hetstats(stdout):
-    """The LAST machine-readable 'HetStats <test> key=value...' line (the human block
-    also starts 'HetStats' but its second field ends in ':')."""
+    """The last HetStats key=value line."""
     got = None
     for line in stdout.splitlines():
         if not line.startswith("HetStats "):
@@ -69,10 +60,10 @@ class TestState(object):
     def __init__(self, name):
         self.name = name
         self.invocations = 0
-        self.runs = 0            # records actually scored (sum of R)
+        self.runs = 0
         self.usable = 0
         self.k = self.k_eff = 0
-        self.scored = self.discarded = 0      # the effort behind the row
+        self.scored = self.discarded = 0
         self.stop = ""
         self.note = ""
 
@@ -86,8 +77,8 @@ class TestState(object):
         self.discarded += int(fnum(kv, "discarded"))
 
     def decide(self, budget, rate_mode):
-        """The stop rule at the pooled scale.  The order of the arms is the policy
-        and must NOT be rearranged."""
+        """Check the sighting before the budget: a row that sees the outcome on its
+        last allowed run is OBSERVED, not BUDGET."""
         if self.stop:
             return self.stop
         # k_eff, NEVER k: a sighting the decode guard rejected stops nothing.
@@ -139,26 +130,16 @@ def parse_args():
                          "plus -logs")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    # Absolute, so an errored row's note names a path a reader can open from
-    # anywhere and the harness cwd does not depend on this process's.
     a.corpus = os.path.abspath(a.corpus)
-    # A budget of 0 or less is "no budget" to het_verdict.h's rule, which the harness
-    # can afford (its run loop is bounded by the record array) and this loop cannot.
     if a.budget_runs < 1:
         die("--budget-runs %d names no bound, and this driver loops until one is "
             "reached" % a.budget_runs)
-    # save_state rewrites --state whole after every test, so starting on a file that
-    # holds rows overwrites measurements nothing here re-ran.  The bar is existence,
-    # NOT terminality: a half-written state is a reading too.  A --dry-run writes
-    # nothing, so it is free to plan against a state that already exists.
     if not a.dry_run and os.path.exists(a.state):
         die("--state %s already exists and a campaign is never resumed: running on "
             "would silently overwrite the rows it holds. Move it aside, or point "
             "--state at a fresh path." % a.state)
     if not a.log_dir:
         a.log_dir = os.path.splitext(a.state)[0] + "-logs"
-    # log_invocation APPENDS, so a dir holding anything would interleave two
-    # campaigns' transcripts under one name.
     if not a.dry_run and os.path.exists(a.log_dir) and (
             not os.path.isdir(a.log_dir) or os.listdir(a.log_dir)):
         die("--log-dir %s exists and is not an empty directory, and every "
@@ -167,8 +148,6 @@ def parse_args():
             "at a fresh path." % a.log_dir)
     if a.seed0 is None:
         a.seed0 = secrets.randbits(31)
-    # Every invocation adds at least one run and the budget bounds a row, so both a
-    # row's invocations and the runs inside one are under it.
     if a.seed0 < 0 or a.seed0 + a.budget_runs * (SEED_STRIDE + 1) >= 2 ** 32:
         die("--seed0 %d with --budget-runs %d reaches past 2^32-1, the width the "
             "harness reads a seed at" % (a.seed0, a.budget_runs))
@@ -176,8 +155,6 @@ def parse_args():
 
 
 def named_tests(spec):
-    """--tests, as a comma list or as a path to a file with one name per line: the
-    first field of a line, `#' and blanks ignored."""
     if not spec:
         return []
     if not os.path.isfile(spec):
@@ -192,8 +169,6 @@ def named_tests(spec):
 
 
 def select_work(a, tests):
-    """Those named by --tests, else the whole corpus.  A named test with no harness dir
-    is FAIL CLOSED, not a skip."""
     known = set(tests)
     subset = named_tests(a.tests) or list(tests)
     uniq = list(dict.fromkeys(subset))
@@ -208,10 +183,6 @@ def select_work(a, tests):
 
 
 def plan_schedule(a, work):
-    """`work` in run order, plus what the schedule costs.  One policy, so one order and
-    one budget: a row stops early because a clean run saw the outcome."""
-    # A worst case, not a schedule
-    # (hetlitmus/docs/environment-design.md "Aggregate").
     print("campaign: %d test(s), one stop rule each: a clean sighting, or %d run(s) "
           "spent.  Worst case %d runs."
           % (len(work), a.budget_runs, len(work) * a.budget_runs))
@@ -229,8 +200,6 @@ def _text(stream):
 
 
 def log_invocation(log_dir, name, rc, env, secs, out, err):
-    """One invocation's transcript, which nothing else keeps: stdout then stderr,
-    each on the stream it arrived on, under a header naming the run."""
     os.makedirs(log_dir, exist_ok=True)
     with open(os.path.join(log_dir, name + ".log"), "a") as fh:
         fh.write("### %s rc=%s seed=%s runs_max=%s secs=%.1f\n"
@@ -242,20 +211,14 @@ def log_invocation(log_dir, name, rc, env, secs, out, err):
 
 
 def drive_test(a, st, budget):
-    """Invoke one test's harness until its stop rule fires, pooling each HetStats line.
-    Every failure mode ends the test as ERROR rather than looping on it."""
     d = os.path.join(a.corpus, st.name)
     exe = os.path.join(d, st.name)
     while not st.decide(budget, a.rate):
         if not os.path.isfile(exe) or not os.access(exe, os.X_OK):
-            # The dir exists (corpus_tests listed it) and the binary does not: the
-            # build did not reach this row, which is not a reading of anything.
             st.stop, st.note = "ERROR", "no executable harness at %s" % exe
             return
         env = dict(os.environ)
         env["HET_SEED"] = str(a.seed0 + st.invocations * SEED_STRIDE)
-        # The harness ends its loop at a clean sighting unless a rate is wanted, and
-        # runs no more than the row has left.
         env["HET_RUNS_MAX"] = str(max(1, budget - st.runs))
         env["HET_STOP_AT_SIGHTING"] = "0" if a.rate else "1"
         t0 = time.time()
@@ -284,12 +247,9 @@ def drive_test(a, st, budget):
         before = st.runs
         st.absorb(kv)
         if st.runs == before:
-            # Zero scored runs is no progress; looping would poll a dead harness.
             st.stop, st.note = "ERROR", "invocation reported R=0 runs"
             return
         if st.usable == 0:
-            # A pool with no usable run measured nothing
-            # (hetlitmus/docs/environment-design.md "Aggregate").
             st.stop, st.note = "ERROR", ("usable=0 of R=%d: nothing was measured"
                                          % st.runs)
             return
@@ -301,9 +261,6 @@ def report_test(st):
 
 
 def run_campaign(a, work):
-    """Drive every test in order; return (states, errors).  The state is written
-    after every test, so a campaign that loses its box leaves the rows it did
-    measure -- not a campaign to continue: parse_args refuses an existing --state."""
     states, errors = [], 0
     print("campaign: seed0=%d -- pass --seed0 %d to replay these seed bases."
           % (a.seed0, a.seed0))

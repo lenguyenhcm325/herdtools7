@@ -1,7 +1,4 @@
-hetlitmus/docs/faithfulness.md
-
-The one place ptxcheck.py must reject: MP-sys-F's frozen PTX with its single
-`ld.relaxed.sys' strengthened to `ld.acquire.sys', read back with no nvcc.
+ptxcheck.py fails when the PTX has an acquire load where the test has a relaxed one.
   $ python3 ../../verify/ptxcheck.py MP-sys-F.litmus --ptx corrupt-strengthen.ptx
   === MP-sys-F [LISA] ===
   FAIL: GPU ordered model-op stream differs

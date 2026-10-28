@@ -1,69 +1,46 @@
-/* het_verdict.h -- the observation record, the outcome rule and the campaign
-   aggregate.  Emitted verbatim into every harness dir: edit this file, not a
-   copy (hetlitmus/docs/environment-design.md "Reporting"). */
 #ifndef HET_VERDICT_H
 #define HET_VERDICT_H
 
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>   /* getenv: the run-time knobs */
-#include <string.h>   /* memset                     */
+#include <stdlib.h>
+#include <string.h>
 
-/* The CPU ISA x GPU dialect the emitter stamps; the default serves a
-   standalone compile. */
 #ifndef HET_PAIR_NAME
 #define HET_PAIR_NAME "(unstamped CPU ISA x GPU dialect pair)"
 #endif
 
-/* Share of N the rendezvous may discard before the run itself is discarded:
-   past it the two sides mostly did not run together. */
 #ifndef HET_RDV_MAX_DISCARD_PCT
 #define HET_RDV_MAX_DISCARD_PCT 50
 #endif
 
-/* Which stress mechanisms this build asked for: a zero tally is dead only where
-   requested.  Bits are a wire format: add at the top, never renumber
-   (hetlitmus/docs/environment-design.md "Wire format"). */
-#define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_GPU_PRE_STRESS_PCT | HET_GPU_MEM_STRESS_PCT */
-#define HET_REQ_CPU_STRESS  (1u << 2)   /* HET_CPU_STRESS_THREADS                  */
-#define HET_REQ_CPU_PRELOAD (1u << 3)   /* HET_CPU_PRELOAD_PCT && _PRELOAD_LIVE    */
-#define HET_REQ_CPU_NOISE   (1u << 4)   /* HET_CPU_NOISE_THREADS > 0               */
-#define HET_REQ_GPU_NOISE   (1u << 5)   /* HET_GPU_NOISE_BLOCKS                    */
+/* Printed as req=0x... in every HetObs line: add bits at the top, never renumber. */
+#define HET_REQ_GPU_STRESS  (1u << 0)
+#define HET_REQ_CPU_STRESS  (1u << 2)
+#define HET_REQ_CPU_PRELOAD (1u << 3)
+#define HET_REQ_CPU_NOISE   (1u << 4)
+#define HET_REQ_GPU_NOISE   (1u << 5)
 
 typedef struct het_obs_record {
   const char *test_name; int run_id;
   uint64_t N;
-  /* target_count <= iters_scored <= N; discarded + scored = N once the readout
-     ran. */
   uint64_t iters_scored;
   uint64_t iters_discarded;
   uint64_t target_count;
-  /* rdv_valid: the readout ran, else the counts are memset zeros.  rdv_cap_*:
-     cap expiries per participant per iteration, neither partitioning nor
-     bounding iters_discarded.  cap_calibrated: 0 until cap_* are measured. */
   int rdv_valid;
   uint64_t rdv_cap_cpu, rdv_cap_gpu;
   uint32_t cap_cpu, cap_gpu;
   int cap_calibrated;
-  /* 0 = one outcome vector across every scored iteration
-     [Srivastava24 sec 4.1]: a caveat, not a discard. */
+  /* 0 = one outcome vector throughout [Srivastava24 sec 4.1] */
   int outcomes_vary;
-  /* GPU stress liveness, the layer's only run-time trace.  stress_truncated:
-     blocks that stopped while the test still ran; gpu_stress_rounds: max rounds
-     one het_do_stress call completed (the co-residency cap squeezes them
-     first). */
   uint64_t stress_truncated;
   uint64_t gpu_stress_rounds;
-  /* CPU + interconnect liveness: zero rounds/ops = the mechanism did not run;
-     cpu_aff_failures > 0 = a pin was refused. */
   uint64_t cpu_stress_rounds, cpu_stress_accesses, cpu_preload_ops;
   uint64_t cpu_noise_rounds, cpu_noise_words;
   uint32_t gpu_noise_blocks, gpu_noise_rounds;
   uint32_t cpu_stress_threads, cpu_aff_failures;
-  /* Realised, not requested: a working set below the last-level cache stresses
-     nothing (HET_LLC_MB, het_cpu_stress.h). */
   uint32_t noise_ws_mb;
-  uint32_t stress_requested;    /* HET_REQ_* bitmask */
+  uint32_t stress_requested;
 } het_obs_record;
 
 /* Run-time knobs, read with getenv rather than -D (nvcc folds a compile-time
@@ -83,64 +60,53 @@ static long het_env_long(const char *name, long dflt) {
   return (end == v) ? dflt : x;
 }
 
-/* Was the weak outcome seen, and if not, is this run's zero a datum at all
- * (hetlitmus/docs/environment-design.md "Liveness"). */
 typedef enum {
   HET_OBSERVED = 0,
   HET_NOT_OBSERVED,
   HET_COLD_INVALID
 } het_verdict_t;
 
-/* Why a run was DISQUALIFIED: a dead mechanism.
-   Vacant bits: 0, 1, 2, 4, 10, 11. */
-#define HET_DQ_STRESS_TRUNCATED (1u << 3)  /* stress stopped mid-run              */
+#define HET_DQ_STRESS_TRUNCATED (1u << 3)
 #define HET_DQ_CPU_STRESS_DEAD  (1u << 5)
 #define HET_DQ_CPU_PRELOAD_DEAD (1u << 6)
-#define HET_DQ_CPU_NOISE_DEAD   (1u << 7)  /* NOT interconnect-stressed           */
+#define HET_DQ_CPU_NOISE_DEAD   (1u << 7)
 #define HET_DQ_GPU_NOISE_DEAD   (1u << 8)
-#define HET_DQ_GPU_STRESS_DEAD  (1u << 9)  /* het_do_stress requested, no round   */
-/* No readout, nothing scored, or discards past HET_RDV_MAX_DISCARD_PCT of N. */
+#define HET_DQ_GPU_STRESS_DEAD  (1u << 9)
 #define HET_DQ_RDV_DEAD         (1u << 12)
 
-/* Why a null was CAVEATED (reportable, but weaker).
-   Vacant bits: 0, 1, 2, 4, 5, 7. */
-#define HET_CV_AFF_FAILED       (1u << 3)  /* a sched_setaffinity call failed     */
-#define HET_CV_UNSTRESSED       (1u << 6)  /* no stress requested at all          */
-#define HET_CV_ONE_OUTCOME      (1u << 8)  /* one outcome vector throughout   */
-#define HET_CV_RDV_UNCALIBRATED (1u << 9)  /* het_rdv.h's placeholder caps    */
+#define HET_CV_AFF_FAILED       (1u << 3)
+#define HET_CV_UNSTRESSED       (1u << 6)
+#define HET_CV_ONE_OUTCOME      (1u << 8)
+#define HET_CV_RDV_UNCALIBRATED (1u << 9)
 
 static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
   return (req & bit) && rounds == 0;
 }
 
-/* The rule, a pure function of the record. */
 static het_verdict_t het_verdict(const het_obs_record *r,
                                  uint32_t *dq_out, uint32_t *cv_out) {
   uint32_t dq = 0, cv = 0;
   uint32_t req = r->stress_requested;
   het_verdict_t v;
 
-  /* ---- 1. Caveats first: a sighting carries them too. */
+  /* Caveats first: a sighting carries them too. */
   if (r->iters_scored > 0 && !r->outcomes_vary)
                                     cv |= HET_CV_ONE_OUTCOME;
   if (!r->cap_calibrated)           cv |= HET_CV_RDV_UNCALIBRATED;
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
 
-  /* ---- 2. A sighting is believed unconditionally. */
+  /* A sighting is believed unconditionally. */
   if (r->target_count > 0) {
     if (dq_out) *dq_out = 0;
     if (cv_out) *cv_out = cv;
     return HET_OBSERVED;
   }
 
-  /* ---- 3. Liveness: the partner first, which no stress tally covers. */
   if (!r->rdv_valid || r->iters_scored == 0 ||
       r->iters_discarded * 100 > r->N * HET_RDV_MAX_DISCARD_PCT)
                                                   dq |= HET_DQ_RDV_DEAD;
   if (r->stress_truncated > 0)                    dq |= HET_DQ_STRESS_TRUNCATED;
-  /* The round tally says the loop ran, not that it still contains its
-     scratchpad accesses. */
   if (het_dead(req, HET_REQ_GPU_STRESS,  r->gpu_stress_rounds))
                                                   dq |= HET_DQ_GPU_STRESS_DEAD;
   if (het_dead(req, HET_REQ_CPU_STRESS,  r->cpu_stress_rounds))
@@ -152,7 +118,6 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   if (het_dead(req, HET_REQ_GPU_NOISE,   (uint64_t)r->gpu_noise_blocks))
                                                   dq |= HET_DQ_GPU_NOISE_DEAD;
 
-  /* ---- 4. A dead mechanism: this run's zero is not a datum. */
   v = dq ? HET_COLD_INVALID : HET_NOT_OBSERVED;
 
   if (dq_out) *dq_out = dq;
@@ -198,7 +163,6 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     _r->noise_ws_mb, _r->cpu_aff_failures);
 }
 
-/* Caveats, printed for a sighting and for a null alike. */
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
   if (cv & HET_CV_UNSTRESSED)   /* [Kirkham20 sec 6.2 Tab.10] */
     fprintf(_ch, "  CAVEAT: no stress was requested; an unstressed null is "
@@ -219,7 +183,6 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
             _r->cpu_aff_failures);
 }
 
-/* Printed under every null, of either class. */
 static void het_print_notobserved(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
     "  %s: the weak outcome was NOT observed -- 0 / N=%llu iterations "
@@ -240,7 +203,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch, "HetVerdict %s run=%d: %s\n",
           _r->test_name, _r->run_id, het_verdict_name(v));
 
-  /* ---- The sighting. */
   if (v == HET_OBSERVED) {
     fprintf(_ch,
       "  ** %s: the weak outcome was OBSERVED on %s in %llu of the %llu scored "
@@ -251,7 +213,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     return;
   }
 
-  /* ---- Both null arms: the counts first. */
   het_print_notobserved(_ch, _r);
 
   if (v == HET_COLD_INVALID) {
@@ -287,7 +248,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     return;
   }
 
-  /* ---- The null frame. */
   fprintf(_ch,
     "  NOT OBSERVED under this effort on %s; the counts above are this run's "
     "reach.\n",
@@ -295,13 +255,9 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   het_print_caveats(_ch, _r, cv);
 }
 
-/* The aggregate, host-side after the campaign; the run is the replication unit
- * (hetlitmus/docs/environment-design.md "Aggregate"). */
-
-/* What the campaign saw, per run. */
 typedef enum {
-  HET_OBS_VOID = 0,   /* no usable run: nothing was measured */
-  HET_OBS_NEVER,      /* k = 0                                */
+  HET_OBS_VOID = 0,
+  HET_OBS_NEVER,
   HET_OBS_SOMETIMES,
   HET_OBS_ALWAYS
 } het_obs_class;
@@ -310,22 +266,20 @@ typedef struct het_stats {
   const char *test_name;
   het_obs_class obs;
 
-  int R;              /* runs supplied (= NUMBER_OF_RUN)                  */
-  int R_usable;       /* runs whose het_verdict() is not COLD-INVALID     */
-  int k;              /* runs with target_count >= 1                      */
-  int k_eff;          /* ... of those, the ones past the decode guard     */
-  int n_degen;        /* sightings the guard rejected (reported, not counted) */
+  int R;
+  int R_usable;
+  int k;
+  int k_eff;
+  int n_degen;
 
-  uint64_t N, iters_scored, iters_discarded;   /* the effort disclosure  */
+  uint64_t N, iters_scored, iters_discarded;
 } het_stats_t;
 
-/* The decode guard [Srivastava24 sec 4.1]: no readout, nothing scored or one
-   vector throughout fails closed; the sighting still prints, outside k_eff. */
+/* The decode guard [Srivastava24 sec 4.1]. */
 static int het_run_degenerate(const het_obs_record *r) {
   return !r->rdv_valid || (r->iters_scored == 0) || !r->outcomes_vary;
 }
 
-/* The aggregate: a pure function of the record stream. */
 static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st) {
   int i;
 
@@ -335,13 +289,11 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   st->test_name = recs[0].test_name;
   st->N         = recs[0].N;
 
-  /* ---- 1. Each run through het_verdict(): every disqualifier is inherited. */
   for (i = 0; i < n; i++) {
     het_verdict_t v = het_verdict(&recs[i], NULL, NULL);
     int y   = recs[i].target_count >= 1;
     int deg = het_run_degenerate(&recs[i]);
 
-    /* A sighting is not COLD, so this count discards none. */
     if (v != HET_COLD_INVALID) st->R_usable++;
 
     if (y) {
@@ -354,9 +306,9 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     st->iters_discarded += recs[i].iters_discarded;
   }
 
-  /* ---- 2. The class, over R rather than R_usable
-     (hetlitmus/docs/environment-design.md "Aggregate"); Void alone turns on
-     R_usable. */
+  /* Divide by R, not R_usable: a sighting is always usable but a null can be
+     discarded, so 3 sightings in 10 runs with 7 discarded nulls would read
+     as Always. */
   { int denom = st->R;
     if (st->R_usable == 0)    st->obs = HET_OBS_VOID;
     else if (st->k == 0)      st->obs = HET_OBS_NEVER;
@@ -374,7 +326,7 @@ static const char *het_obs_class_name(het_obs_class c) {
   }
 }
 
-/* The machine-readable line.  hetlitmus/campaign.py schedules from it. */
+/* hetlitmus/campaign.py parses this line by key. */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s obs=%s "
@@ -387,7 +339,6 @@ static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
     (unsigned long long)_s->iters_discarded);
 }
 
-/* The human block. */
 static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
   het_stats_line(_ch, _s);
 
@@ -403,7 +354,6 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     return;
   }
 
-  /* ---- the headline: scoring over the usable runs, effort over all runs. */
   if (_s->obs == HET_OBS_NEVER) {
     fprintf(_ch,
       "  NOT OBSERVED in any of the %d usable run(s).\n"
@@ -415,7 +365,6 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     return;
   }
 
-  /* ---- observed. */
   fprintf(_ch,
     "  OBSERVED in %d of %d run(s), %d of them after the decode guard.\n",
     _s->k, _s->R, _s->k_eff);

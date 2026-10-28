@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
-# emit-all.sh -- emit the built corpus trees (paths.sh) over every (CPU ISA x
-# GPU dialect) lane into OUTDIR, at the censuses verify/census.sh pins.  A
-# behaviour-preserving
-# emitter refactor proves itself byte-identical against two snapshots:
-#   ./emit-all.sh SNAP_BEFORE; ...refactor...; ./emit-all.sh SNAP_AFTER
-#   diff -r SNAP_BEFORE SNAP_AFTER && echo BYTE-IDENTICAL
-# litmus7's batch driver catches an emission exception and still exits 0, so
-# each lane is fail-closed three ways: litmus7's status AND the "HetLitmus
-# REFUSED" marker; the harness dir with its _cpu.c, its render and no other
-# vendor's; and the pair name every render must stamp exactly once.
+# emit-all.sh -- emit every corpus over every (CPU ISA x GPU dialect) lane into OUTDIR.
 # Usage: hetlitmus/verify/emit-all.sh OUTDIR.  Exit 0 = every lane complete.
 set -euo pipefail
 
@@ -16,11 +7,9 @@ set -euo pipefail
 . "$HETL/verify/census.sh"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
-# The emission lanes, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
 HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86_64-hip x86:cuda:cu:het-x86_64-cuda \
 aarch64:hip:hip:het-hip"
-# The pair name each lane's renders must stamp.
-pair_of_lane() {                # <corpus>:<target> -> the HET_PAIR_NAME value
+pair_of_lane() {
   case "$1" in
     aarch64:*) echo "(AArch64, ${1#*:})" ;;
     x86:*)     echo "(X86_64, ${1#*:})" ;;
@@ -28,8 +17,8 @@ pair_of_lane() {                # <corpus>:<target> -> the HET_PAIR_NAME value
   esac
 }
 GPU_LANES="cuda:cu:gpu-cuda hip:hip:gpu-hip"
-EXPECT_GPU="$CENSUS_GPU_ONLY"     # kernels per gpu-only lane
-expect_of_corpus() {            # <corpus> -> harness dirs per het lane
+EXPECT_GPU="$CENSUS_GPU_ONLY"
+expect_of_corpus() {
   case "$1" in
     aarch64) echo "$CENSUS_HET" ;;
     x86)     echo "$CENSUS_HET_X86" ;;
@@ -41,12 +30,11 @@ OUTDIR="${1:?usage: emit-all.sh OUTDIR}"
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 
-# Outside OUTDIR: a snapshot is byte-diffed with `diff -r', which compares
-# dotfiles too, so no scratch file may land in it.
+# Outside OUTDIR: `diff -r' compares dotfiles too.
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 
-corpus_dir() {                  # <corpus> -> the built tree to emit from
+corpus_dir() {
   case "$1" in
     aarch64) echo "$HET_CORPUS" ;;
     x86)     echo "$X86_CORPUS" ;;
@@ -102,7 +90,6 @@ for lane in $HET_LANES; do
           exit 1
         fi
       done
-      # The pair this harness was built for.
       if [ "$(grep -cF "#define HET_PAIR_NAME \"$want_pair\"" "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
         echo "FAIL: $t in the $corpus/$target lane does not stamp HET_PAIR_NAME \"$want_pair\" exactly once; it stamps:" >&2
         grep -F '#define HET_PAIR_NAME' "$OUTDIR/$sub/$n/$n.$ext" >&2 \

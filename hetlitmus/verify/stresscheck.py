@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the GPU stress-liveness gate (hetlitmus/docs/faithfulness.md
-"Scope and limits").  The round tally counts loop trips, not memory ops, so
-this reads the PTX of `nvcc --ptx' on one het render instead:
-  anchor     both PCT toggles off leaves exactly the render's read-buffer stores
-  pre, mem   each class keeps >= 1 scratchpad load AND store
-  gpu-noise  the noise stream survives as volatile 64-bit loads
-A miss means a null was scored on a stress layer nvcc folded away.
+"""GPU stress and noise survive into the emitted PTX.
 Usage: stresscheck.py <het .litmus>.  Needs nvcc, no device.
 Exit 0 = PASS, 1 = FAIL, 2 = error.
 """
@@ -21,19 +15,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ptxcheck as ptx
 
-# A plain 32-bit global load or store outside the inline-asm stream is a
-# scratchpad access; the noise stream is volatile and 64-bit.
 ASM = re.compile(r'// begin inline asm.*?// end inline asm', re.S)
 LD = re.compile(r'^\s*ld\.global\.u32\b', re.M)
 ST = re.compile(r'^\s*st\.global\.u32\b', re.M)
 NOISE = re.compile(r'^\s*ld\.volatile\.global\.u64\b', re.M)
-# The render's own plain-u32 stores, one per (GPU proc, load): the anchor.
 BUF_STORE = re.compile(r'^\s+bufP\d+_\d+\[_n\] = r\d+;', re.M)
 OFF = {"pre": "-DHET_GPU_PRE_STRESS_PCT=0", "mem": "-DHET_GPU_MEM_STRESS_PCT=0"}
 
 
 def ops(cu, tmp, flags):
-    """(loads, stores, noise loads) of the PTX compiled under flags."""
     out = os.path.join(tmp, "v.ptx")
     ptx.compile_ptx(cu, out, flags)
     with open(out) as fh:
@@ -42,7 +32,6 @@ def ops(cu, tmp, flags):
 
 
 def check(litmus_path):
-    """The FAIL lines for one het .litmus."""
     tmp = tempfile.mkdtemp(prefix="stresscheck_")
     try:
         cu, cpu_c = ptx.emit_harness(litmus_path, tmp)

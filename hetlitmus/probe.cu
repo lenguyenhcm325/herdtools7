@@ -1,11 +1,4 @@
-/* The machine probe: what this box offers, printed as key=value lines for
- * probe.txt.  Run it FIRST on a rented instance -- cooperative launch, which
- * shared-memory modes are legal, and the coherence mechanism behind them are
- * runtime properties of the box that the harness demands and the code cannot
- * settle.  The steps of a run: hetlitmus/docs/het-emission.md, "From a
- * corpus to a results dir".  Compile to PTX only (probe-cuda.sh): this file
- * must load without knowing the arch first.  It makes no memory-model claim and
- * its output is never a litmus result. */
+/* Built by probe-cuda.sh as generic PTX, so it runs on a GPU whose arch is not yet known. */
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -15,9 +8,8 @@ __global__ void probe_write(unsigned long long *p, unsigned long long v) {
   if (threadIdx.x == 0 && blockIdx.x == 0) *p = v;
 }
 
-/* One thread, `iters' system-scope increments, raced against the same count on
-   the host: a short total is decisive that this mode's read-modify-write is not
-   atomic against the CPU, a matching one only weak evidence the other way. */
+/* A short total proves the RMW is not atomic against the CPU; a matching one
+   is only weak evidence that it is. */
 __global__ void probe_sysadd(unsigned long long *p, int iters) {
   if (threadIdx.x == 0 && blockIdx.x == 0)
     for (int i = 0; i < iters; i++) atomicAdd_system(p, 1ull);
@@ -31,11 +23,8 @@ static int iattr(cudaDeviceAttr a) {
 
 #define SYS_ITERS 200000
 
-/* Exercise one HET_ALLOC mode: allocate, write through the pointer on the
-   device, read it back on the host, then race a system-scope fetch_add.
-   NEVER exercise a mode the device cannot reach: cudaErrorIllegalAddress is
-   sticky and poisons the context.  `reachable' gates the whole mode;
-   `concurrent_ok' gates only the race. */
+/* Skip modes the device cannot reach: one illegal access makes every later
+   CUDA call in this process fail. */
 static int poisoned = 0;
 
 static void exercise(const char *mode, int reachable, const char *why_not,
@@ -121,7 +110,6 @@ int main(void) {
   printf("global_mem_mb=%llu\n",
          (unsigned long long)(prop.totalGlobalMem / (1024ull * 1024ull)));
 
-  /* The attributes the shared allocator, the driver and the barrier turn on. */
   int pg   = iattr(cudaDevAttrPageableMemoryAccess);
   int ht   = iattr(cudaDevAttrPageableMemoryAccessUsesHostPageTables);
   int cma  = iattr(cudaDevAttrConcurrentManagedAccess);

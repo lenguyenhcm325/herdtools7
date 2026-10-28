@@ -8,9 +8,8 @@
  (copy ../Version.ml Version.ml))
 
 ; HetLitmus: wrap the C/CUDA runtime payloads a harness carries into the
-; generated HetPayloads module, read by hetEmit.ml and hetDialect.ml.  What the
-; payloads are, and the `|het_payload}' delimiter constraint on their content:
-; litmus/het-runtime/README.md.
+; generated HetPayloads module, read by hetEmit.ml and hetDialect.ml.  A payload
+; must never contain the `|het_payload}' delimiter.
 (rule
  (targets hetPayloads.ml)
  (deps libdir/_outs.h libdir/_outs.c

@@ -1,4 +1,4 @@
-Persistent-loop guard (hetlitmus/docs/environment-design.md "Rendezvous").
+Persistent-loop guard.
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-ra.acq.litmus >/dev/null 2>&1
   $ mkdir hip
@@ -10,8 +10,7 @@ Persistent-loop guard (hetlitmus/docs/environment-design.md "Rendezvous").
   $ grep -c '<<<' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu || true
   0
 
-(b,c) the inner window: one GPU lane and one CPU wrapper, so the
-for(_n<SIZE_OF_TEST) loops total 3 with the host readout's own walk.
+(b,c) one GPU lane and one CPU wrapper.
   $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu
   3
 
@@ -19,15 +18,13 @@ NPART counts both participants, so the rendezvous waits for both.
   $ grep -c '#define NPART 2' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu
   1
 
-(d) exactly ONE terminal device sync per run, scoped to the run loop, and none
-in gd_alloc_noise.
+(d) exactly one terminal device sync per run.
   $ sed -n '/for (int _run=0; _run<_runs_budget/,/^  }$/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu | grep -c 'cudaDeviceSynchronize'
   1
   $ sed -n '/^static int gd_alloc_noise/,/^}$/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu | grep -c 'cudaDeviceSynchronize' || true
   0
 
-(e) cooperative launch is used ONLY for co-residency: no cooperative_groups.h, no
-grid.sync().
+(e) no cooperative_groups.h and no grid.sync().
   $ grep -cE 'cooperative_groups|grid\.sync' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu || true
   0
 
@@ -35,8 +32,7 @@ grid.sync().
   $ grep -cE '#define SIZE_OF_TEST|#define NUMBER_OF_RUN' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu
   2
 
-(g) the grid <= co-resident cap guard, pinned here alone: it must stay installed
-when the stress layer raises _grid toward the cap.
+(g) the grid stays within the co-resident cap.
   $ grep -c '_grid > _maxGrid' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu
   1
 
@@ -44,8 +40,7 @@ The HIP twin renders the same shape from the same template.
   $ grep -c hipLaunchCooperativeKernel hip/MP-cg-sys-plain.acq-x86_64/MP-cg-sys-plain.acq-x86_64.hip
   1
 
-(h) the launch geometry is the test's own scope tree: two GPU procs in one cta
-need two lanes of one block, in two ctas one lane of each of two blocks.
+(h) the launch geometry follows the test's scope tree.
   $ cat > tree.litmus <<'EOF'
   > Het tree
   > {
@@ -74,8 +69,7 @@ The two-cta launch guards its lanes by block, the one-cta launch by lane.
   $ grep -c 'blockIdx.x == 0 && threadIdx.x == 1' onecta/tree/tree.cu
   1
 
-Either way exactly ONE lane -- the one at (0,0) -- publishes the iteration count
-the stress population polls.
+Either way exactly one lane, at (0,0), publishes the iteration count.
   $ grep -c 'het_scratch_bump(_gpu_iter);' onecta/tree/tree.cu
   1
   $ grep -c 'het_scratch_bump(_gpu_iter);' twoctas/tree/tree.cu

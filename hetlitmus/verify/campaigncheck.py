@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the campaign gate: hetlitmus/campaign.py end to end against a
-stub harness printing deterministic HetStats lines.  Pinned in the state CSV:
-a clean sighting ends a row and outranks the budget, a rejected sighting stops
-nothing, a row with no usable run, no harness binary or a harness outliving
---timeout ends ERROR with its reason banked, --rate turns the sighting stop
-off and nothing else, and every invocation carries the seed base plus its
-stride, the runs the row has left and the stop flag.  A miss means the
-hardware hours go where the brief does not say (what a null is worth:
-hetlitmus/docs/environment-design.md "Aggregate").  Usage: campaigncheck.py
+"""Campaign gate: hetlitmus/campaign.py end to end against a stub harness.
+Usage: campaigncheck.py
 """
 
 import csv
@@ -22,15 +15,11 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 import campaign
 
 SEED0 = 777
-# The budget the campaign is driven with, and what one stub invocation
-# reports: R runs, scoring and discarding these totals.
 BUDGET, R = 100, 10
 SCORED, DISCARDED = 100000, 250
 TESTS = ["NULL-pooled", "SIGHT-clean", "SIGHT-degen", "SIGHT-late",
          "VOID-dead", "VOID-late"]
 
-# The stand-in runs as ./<test> from <corpus>/<test>: it locates its own dir,
-# counts its invocations and logs the knobs it was handed.
 STUB = r'''#!/usr/bin/env python3
 import os, sys
 d = os.path.dirname(os.path.abspath(__file__))
@@ -63,7 +52,6 @@ SCRIPT = {"NULL-pooled": lambda inv: NULL,
 line(*SCRIPT[test](inv))
 '''
 
-# A stand-in that outlives its timeout, having flushed a line first.
 SLEEPER = ("#!/usr/bin/env python3\n"
            "import sys, time\n"
            "sys.stdout.write('HetLitmus: shared-mem mode=stub\\n')\n"
@@ -72,7 +60,6 @@ SLEEPER = ("#!/usr/bin/env python3\n"
 
 
 def row(stop, inv, usable, k, k_eff, note=""):
-    """The state CSV row a test ends with after inv stub invocations."""
     return dict(stop=stop, invocations=str(inv), seed0=str(SEED0),
                 runs=str(inv * R), usable=str(usable), k=str(k), k_eff=str(k_eff),
                 scored=str(inv * SCORED), discarded=str(inv * DISCARDED), note=note)
@@ -82,11 +69,11 @@ SEEN = "the weak outcome was seen in 1 clean run(s)"
 WANT = {
     "NULL-pooled": row("BUDGET", 10, BUDGET, 0, 0),
     "SIGHT-clean": row("OBSERVED", 1, R, 1, 1, SEEN),
-    "SIGHT-late": row("OBSERVED", 5, 5 * R, 1, 1, SEEN),  # four nulls, then a sighting
-    "SIGHT-degen": row("BUDGET", 10, BUDGET, 10, 0),     # every sighting guard-rejected
+    "SIGHT-late": row("OBSERVED", 5, 5 * R, 1, 1, SEEN),
+    "SIGHT-degen": row("BUDGET", 10, BUDGET, 10, 0),
     "VOID-dead": row("ERROR", 1, 0, 0, 0,
                      "usable=0 of R=%d: nothing was measured" % R),
-    "VOID-late": row("BUDGET", 10, R, 0, 0),             # measured once, then went dead
+    "VOID-late": row("BUDGET", 10, R, 0, 0),
 }
 
 BAD = []
@@ -99,8 +86,6 @@ def check(ok, msg):
 
 
 def mk_corpus(tmp, name, tests, body=STUB):
-    """One harness dir per test holding the stand-in at <t>/<t>, the path
-    campaign.py runs; body=None leaves the dir with no binary."""
     corpus = os.path.join(tmp, name)
     for t in tests:
         d = os.path.join(corpus, t)
@@ -120,7 +105,6 @@ def run_campaign(corpus, state, *extra):
 
 
 def banked(state):
-    """The state CSV's rows, in the order they were written."""
     if not os.path.exists(state):
         return []
     with open(state) as fh:
@@ -132,13 +116,11 @@ def note_of(state, test):
 
 
 def seeds(corpus, test):
-    """[(invocation, HET_SEED, HET_RUNS_MAX, HET_STOP_AT_SIGHTING)] the stub logged."""
     with open(os.path.join(corpus, test, "seeds.log")) as fh:
         return [tuple(l.split()) for l in fh]
 
 
 def run(tmp):
-    # ---- the policy, end to end: one row per stop rule, banked in the CSV.
     corpus = mk_corpus(tmp, "corpus", TESTS)
     state = os.path.join(tmp, "state.csv")
     r = run_campaign(corpus, state)
@@ -152,8 +134,6 @@ def run(tmp):
         w = WANT.get(x["test"], {})
         off = {c: (x.get(c), w[c]) for c in w if x.get(c) != w[c]}
         check(not off, "%-12s banked %s (got, want)" % (x["test"], off))
-    # ---- every invocation: the seed base plus its stride, the runs the row
-    # has left, and the stop flag.
     for t in TESTS:
         for inv, seed, runs_max, stop_at in seeds(corpus, t):
             i = int(inv) - 1
@@ -162,7 +142,6 @@ def run(tmp):
                   "%s invocation %s ran under HET_SEED=%s HET_RUNS_MAX=%s "
                   "HET_STOP_AT_SIGHTING=%s, want %s"
                   % (t, inv, seed, runs_max, stop_at, w))
-    # ---- --rate turns the sighting stop off and nothing else.
     rate = mk_corpus(tmp, "rate", ["SIGHT-clean", "NULL-pooled"])
     st = os.path.join(tmp, "rate.csv")
     r = run_campaign(rate, st, "--rate")
@@ -174,7 +153,6 @@ def run(tmp):
     stops = set(s[3] for s in seeds(rate, "SIGHT-clean"))
     check(stops == {"0"}, "--rate handed HET_STOP_AT_SIGHTING=%s to the "
           "harness, want 0 on every invocation" % sorted(stops))
-    # ---- a harness dir the build never reached ends ERROR naming the path.
     noexe = mk_corpus(tmp, "noexe", ["UNBUILT"], body=None)
     st = os.path.join(tmp, "noexe.csv")
     r = run_campaign(noexe, st)
@@ -183,7 +161,6 @@ def run(tmp):
           and os.path.join(noexe, "UNBUILT", "UNBUILT") in note,
           "a dir with no harness binary exited %d with note %r, want 1 and a "
           "note naming the path" % (r.returncode, note))
-    # ---- a harness outliving --timeout ends ERROR, its partial transcript kept.
     slow = mk_corpus(tmp, "slow", ["SLOW"], body=SLEEPER)
     st, logs = os.path.join(tmp, "slow.csv"), os.path.join(tmp, "slow-logs")
     r = run_campaign(slow, st, "--timeout", "1", "--log-dir", logs)
@@ -207,10 +184,7 @@ def main():
     if BAD:
         print("\nCAMPAIGNCHECK FAILED: %d problem(s)." % len(BAD))
         return 1
-    print("\nCAMPAIGNCHECK OK -- a clean sighting ends a row and outranks the "
-          "budget, --rate turns that off and nothing else, a row nothing ran "
-          "and a row that measured nothing both end ERROR, and every "
-          "invocation's seed, runs and stop flag are the driver's.")
+    print("\nCAMPAIGNCHECK OK")
     return 0
 
 

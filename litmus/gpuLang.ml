@@ -14,18 +14,7 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: what the CUDA (.cu) and HIP (.hip) litmus renders share -- the
-   annotation vocabulary, the BellBase accessors, the launch layout and the
-   whole-test driver.  Both consume the *parsed* Bell program, NOT the litmus7
-   Out template (hetlitmus/docs/gpu-emitters.md, "Why this shape").
-   A [t] dialect record carries the per-instruction lowering and
-   the differing emitted tokens, so CudaLang and HipLang are thin
-   instantiations. *)
-
 open Printf
-
-(* Order / scope vocabulary, one table per instruction kind; the vocabulary's
-   home is hetlitmus/bells/gpu.bell. *)
 
 let load_orders = ["relaxed" ; "acquire" ; "sc"]
 let store_orders = ["relaxed" ; "release" ; "sc"]
@@ -34,15 +23,10 @@ let scope_names = ["cta" ; "gpu" ; "sys"]
 
 let is_scope a = List.mem a scope_names
 
-(* Bell annotation list -> (order, scope), total on an admitted instruction:
-   check_program refuses every other annotation list. *)
 let order_scope_of = function
   | [ord ; scp] -> ord, scp
   | _ -> assert false
 
-(* BellBase accessors *)
-
-(* Test name -> valid C identifier. *)
 let c_ident s =
   String.map (fun c ->
     if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
@@ -54,7 +38,7 @@ let reg_name = function
 
 let var_of_reg_or_addr = function
   | BellBase.Abs s -> s
-  | BellBase.Rega r -> reg_name r (* address held in register *)
+  | BellBase.Rega r -> reg_name r
 
 let var_of_addr_op = function
   | BellBase.Addr_op_atom roa -> var_of_reg_or_addr roa
@@ -64,8 +48,6 @@ let value_of_roi = function
   | BellBase.Regi r -> reg_name r
   | BellBase.Imm i -> sprintf "%i" i
 
-(* Peel labels to straight-line instructions.  NOT Pseudo.fold_pseudo_code:
-   that asserts on a Macro instead of skipping it. *)
 let rec instrs_of_pseudo = function
   | BellBase.Instruction i -> [i]
   | BellBase.Label (_, p) -> instrs_of_pseudo p
@@ -73,10 +55,6 @@ let rec instrs_of_pseudo = function
   | BellBase.Pagealign | BellBase.Skip _ -> []
 
 let instrs_of_code code = List.concat_map instrs_of_pseudo code
-
-(* GPU-column admissibility: the vocabulary hetlitmus/bells/gpu.bell declares,
-   checked over a whole program BEFORE anything is written.
-   hetlitmus/docs/het-emission.md, "Scope / limits". *)
 
 let symbolic_reg = function
   | BellBase.Symbolic_reg _ -> true
@@ -94,8 +72,6 @@ let symbolic_addr_op = function
   | BellBase.Addr_op_atom roa -> symbolic_roa roa
   | BellBase.Addr_op_add (roa, roi) -> symbolic_roa roa || symbolic_roi roi
 
-(* One order from this instruction's own set, THEN one scope: a Bell annotation
-   group is positional. *)
 let annots_admitted orders = function
   | [ord ; scp] -> List.mem ord orders && is_scope scp
   | _ -> false
@@ -130,14 +106,11 @@ let check_program prog =
     (fun ((p, _, _), code) -> List.iter (check_instr p) (instrs_of_code code))
     prog
 
-(* Globals and per-proc result registers *)
-
 let abs_of_addr_op = function
   | BellBase.Addr_op_atom (BellBase.Abs s)
   | BellBase.Addr_op_add (BellBase.Abs s, _) -> Some s
   | _ -> None
 
-(* Memory locations touched anywhere in the test, in first-seen order. *)
 let collect_globals prog =
   let seen = Hashtbl.create 8 and order = ref [] in
   let add s =
@@ -156,7 +129,6 @@ let collect_globals prog =
     prog ;
   List.rev !order
 
-(* Destination registers of loads on a proc = its observable results. *)
 let result_regs code =
   let seen = Hashtbl.create 4 and order = ref [] in
   List.iter
@@ -169,9 +141,6 @@ let result_regs code =
     (instrs_of_code code) ;
   List.rev !order
 
-(* Scope tree -> (proc -> (block,lane)) launch layout: a block is a maximal
-   subtree rooted at a `cta' node. *)
-
 let rec subtree_procs (BellInfo.Tree (_, ps, ch)) =
   ps @ List.concat_map subtree_procs ch
 
@@ -179,9 +148,6 @@ let rec collect_ctas (BellInfo.Tree (name, _, ch) as t) =
   if name = "cta" then [t]
   else List.concat_map collect_ctas ch
 
-(* The tree the test declared, [None] where it carries no `scopes:' row
-   (hetlitmus/docs/het-litmus-format.md "The file format").  Both dispatch
-   arms read it from here, so one launch geometry serves both. *)
 let scopes_of extra_data =
   let rec find = function
     | MiscParser.BellExtra bi :: _ -> bi.BellInfo.scopes
@@ -189,9 +155,6 @@ let scopes_of extra_data =
     | [] -> None in
   find extra_data
 
-(* A declared tree places the GPU procs and ONLY them: a proc it leaves out
-   would be laid out by the no-tree fallback instead, and a proc it names
-   twice would keep whichever placement came last. *)
 let check_scopes scopes procs = match scopes with
   | None -> ()
   | Some tree ->
@@ -214,8 +177,6 @@ let check_scopes scopes procs = match scopes with
               "HetLitmus: the scopes tree places no P%d; a declared tree \
                places every gpu proc" p)
         procs ;
-      (* An empty cta is a block with no lane, so the block indices past it
-         slide and no lane sits at (0,0). *)
       List.iter
         (fun cta ->
           if subtree_procs cta = [] then
@@ -224,7 +185,6 @@ let check_scopes scopes procs = match scopes with
                declared cta places at least one gpu proc")
         (collect_ctas tree)
 
-(* returns (layout : (proc -> block*lane), n_blocks, block_dim) *)
 let layout_of_scopes scopes procs =
   let blocks =
     match scopes with
@@ -237,7 +197,6 @@ let layout_of_scopes scopes procs =
     (fun bi plist ->
       List.iteri (fun li p -> Hashtbl.replace tbl p (bi, li)) (List.sort compare plist))
     blocks ;
-  (* Any proc not placed by the tree: give it its own fresh block. *)
   let nb = ref (List.length blocks) in
   List.iter
     (fun p -> if not (Hashtbl.mem tbl p) then begin
@@ -249,8 +208,6 @@ let layout_of_scopes scopes procs =
     List.fold_left (fun m plist -> max m (List.length plist)) 1 blocks in
   (fun p -> try Hashtbl.find tbl p with Not_found -> (p, 0)), n_blocks, block_dim
 
-(* The exists condition, for the emitted banner. *)
-
 let cond_to_string cond =
   let pp_atom =
     ConstrGen.dump_atom
@@ -258,33 +215,24 @@ let cond_to_string cond =
       (fun v -> ParsedConstant.pp_v v) (fun _ -> "") in
   ConstrGen.constraints_to_string pp_atom cond
 
-(* Slot-addressing context: [Some idx] addresses every access at iteration
-   [idx]'s own slot (litmus/het-runtime/het_rdv.h), [None] is the GPU-only
-   path's one word per location.  hetlitmus/docs/het-emission.md. *)
 type het_ctx = string option
 
-(* The dialect: what the two renders do not share.  Per-target behaviour is
-   added as a field here, NEVER as a branch in [dump_test]. *)
 type t = {
-    gl_kind : string ;          (* banner word: "CUDA" | "HIP" *)
-    gl_lang : string ;          (* emitting module: "CudaLang" | "HipLang" *)
-    gl_emit_script : string ;   (* the regeneration script named in the banner *)
-    gl_group : string ;         (* thread-block word: "CTA" | "workgroup" *)
-    gl_include : string ;       (* the differing GPU runtime header *)
-    gl_alloc : string -> string -> string ;  (* var, bytes -> checked alloc statement *)
-    gl_alloc_def : string ;     (* file-scope allocator the host harness calls *)
+    gl_kind : string ;
+    gl_lang : string ;
+    gl_emit_script : string ;
+    gl_group : string ;
+    gl_include : string ;
+    gl_alloc : string -> string -> string ;
+    gl_alloc_def : string ;
     gl_launch : string -> int -> int -> string -> string ;
-                                (* c-ident, blocks, block dim, args -> launch *)
-    gl_sync : string ;          (* host-side device-sync statement *)
+    gl_sync : string ;
     gl_dump_instr :
       out_channel -> het:het_ctx -> string -> BellBase.instruction -> unit ;
     gl_fence_floor_guard : BellBase.instruction list -> string ;
-                                (* target-floor #error the fences demand, or "" *)
   }
 
-(* Whole-test emission *)
-
-let nregs_layout = 8 (* result slots reserved per proc in the out buffer *)
+let nregs_layout = 8
 
 let dump_test d chan tname parsed =
   let prog = parsed.MiscParser.prog in
@@ -294,7 +242,6 @@ let dump_test d chan tname parsed =
   let scopes = scopes_of parsed.MiscParser.extra_data in
   let layout, n_blocks, block_dim = layout_of_scopes scopes procs in
   let p fmt = fprintf chan fmt in
-  (* Banner *)
   p "// ======================================================================\n" ;
   p "// %s litmus test: %s\n" d.gl_kind tname ;
   p "// Generated by HetLitmus %s from a LISA/Bell scoped test.\n" d.gl_lang ;
@@ -319,7 +266,6 @@ let dump_test d chan tname parsed =
   p "%s"
     (d.gl_fence_floor_guard
        (List.concat_map (fun (_, code) -> instrs_of_code code) prog)) ;
-  (* Kernel *)
   let params =
     String.concat ", "
       (List.map (fun g -> sprintf "int* %s" g) globals @ ["int* __out"]) in
@@ -340,7 +286,6 @@ let dump_test d chan tname parsed =
       p "  }\n")
     prog ;
   p "}\n\n" ;
-  (* Host harness (illustrative) *)
   p "// ---- host harness (illustrative) ----\n" ;
   p "// Result buffer layout: __out[proc * %d + regIndex].\n" nregs_layout ;
   p "// Reset all globals to 0 before each launch; the weak outcome under\n" ;

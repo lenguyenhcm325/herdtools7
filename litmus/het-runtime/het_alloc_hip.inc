@@ -1,16 +1,13 @@
-/* Shared variables and barrier use the default fine-grained hipMallocManaged,
-   which is host-device coherent while kernels run [HipRuntimeApi
-   "hipMemAdviseSetCoarseGrain"].  HET_ALLOC accepts auto or managed; read
-   buffers use hipMalloc (hetlitmus/docs/environment-design.md "Allocation"). */
+/* Fine-grained hipMallocManaged, the default, is host-device coherent while
+   kernels run [HipRuntimeApi "hipMemAdviseSetCoarseGrain"]. */
 #define HET_HIP_ALLOC_MANAGED 1
 static int _het_hip_attr(hipDeviceAttribute_t _a){
   int _v = 0;
   (void)hipDeviceGetAttribute(&_v, _a, 0);
   return _v;
 }
-/* MI300A and MI300X both report gfx942.  hipDeviceAttributeIntegrated
-   distinguishes the APU from the discrete part so the banner does not report a
-   discrete run as MI300A [HipRuntimeApi "hipDeviceAttributeIntegrated"]. */
+/* MI300A and MI300X both report gfx942; only this attribute tells them apart
+   [HipRuntimeApi "hipDeviceAttributeIntegrated"]. */
 static const char* _het_amd_part_class(int _integrated){
   return _integrated ? "APU(integrated)" : "DISCRETE(not-integrated)";
 }
@@ -41,25 +38,20 @@ static int _het_alloc_mode(void){
          (_v != NULL && *_v != '\0') ? _v : "unset",
          _het_amd_part_class(_integrated), _integrated, _managed, _cma, _pg);
   fflush(stdout);
-  /* Without HMM hipMallocManaged silently becomes hipMallocHost, pinned host
-     memory off the coherent path [HipRuntimeApi "hipMallocManaged"]: fatal,
-     never a warning. */
+  /* Without HMM, hipMallocManaged silently becomes pinned host memory off the
+     coherent path [HipRuntimeApi "hipMallocManaged"]. */
   if (!_managed) {
     fprintf(stderr,
             "HetLitmus FATAL: hipDeviceAttributeManagedMemory=0: hipMallocManaged "
             "would fall back to pinned host memory, off the coherent path.\n");
     exit(2);
   }
-  /* Every het test has the CPU touching the shared allocation while the kernel
-     is live. */
   if (!_cma) {
     fprintf(stderr,
             "HetLitmus FATAL: hipDeviceAttributeConcurrentManagedAccess=0: the CPU "
             "may not touch a managed allocation while the kernel is live.\n");
     exit(2);
   }
-  /* Not fatal: a discrete part is a valid bring-up target, announced and stamped
-     so its histogram never reads as an APU result. */
   if (!_integrated) {
     fprintf(stderr,
             "HetLitmus WARNING: hipDeviceAttributeIntegrated=0: a discrete AMD GPU, "
@@ -68,9 +60,9 @@ static int _het_alloc_mode(void){
   return _mode;
 }
 static void gd_alloc_shared(void** _pp, size_t _bytes){
-  (void)_het_alloc_mode();               /* resolve + guard once, before the first alloc */
-  *_pp = NULL;   /* never read the caller's uninitialised pointer */
-  hipError_t _e = hipMallocManaged(_pp, _bytes);   /* fine-grained by default */
+  (void)_het_alloc_mode();
+  *_pp = NULL;
+  hipError_t _e = hipMallocManaged(_pp, _bytes);
   if (_e != hipSuccess || *_pp == NULL) {
     fprintf(stderr,
             "HetLitmus FATAL: hipMallocManaged of %llu bytes for the shared vars "
@@ -80,12 +72,9 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
   }
 }
 static void gd_free_shared(void* _p){
-  /* Keyed on the cached mode, so a second mode could not leave a mismatched free. */
   (void)_het_alloc_mode();
   (void)hipFree(_p);
 }
-/* The harness's own device memory (read buffers, scratchpad, tally): a NULL
-   would reach the launch, so a refused allocation ends the run. */
 static void gd_alloc_dev(void** _pp, size_t _bytes, const char* _what){
   *_pp = NULL;
   hipError_t _e = hipMalloc(_pp, _bytes);

@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""The stress-environment tuner: a seeded random search over the harness's own
-stress knobs, one target machine at a time.
+"""Tune the stress knobs: a seeded random search on one target machine.
 
-`search' draws a configuration, rebuilds every harness dir of --emit-dir with the
-knobs as `-D' flags through build.sh's NVCC/HIPCC channel, runs each row once, and
-appends the result to an append-only JSONL log.  That log is the whole state:
-`rank' reads it offline and writes the winner params files.  The
-score is weak iterations per wall-clock second, per row; the draw, the three
-validity layers and the objective are hetlitmus/docs/environment-design.md
-"Tuning".  Exit: 0 = the pass ran; 2 = configuration/environment error.
+Method from [CudaLitmus]'s tune.sh.
+Exit: 0 = the pass ran; 2 = configuration/environment error.
 """
 
 import argparse
@@ -36,8 +30,6 @@ def die(msg):
 
 
 def header_define(path, name):
-    """The value `path' compiles for `name'.  A header out of reach is fatal, not
-    defaulted: the tuner would otherwise search against a bound nothing holds."""
     try:
         with open(path) as fh:
             text = fh.read()
@@ -50,16 +42,11 @@ def header_define(path, name):
     return int(m.group(1))
 
 
-# ---------------------------------------------------------------------------
-# The draw.  Knob j of configuration i is a pure function of (base seed, i, j),
-# so an index regenerates its whole vector anywhere.
-# ---------------------------------------------------------------------------
-
 _M64 = (1 << 64) - 1
 
 
 def het_draw(seed, who, k):
-    """het_cpu_stress.h's splitmix64 draw, value for value."""
+    """splitmix64 [Vigna15]."""
     z = ((((seed & 0xffffffff) << 32) | (who & 0xffffffff))
          + k * 0x9E3779B97F4A7C15) & _M64
     z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _M64
@@ -67,8 +54,6 @@ def het_draw(seed, who, k):
     return (z ^ (z >> 31)) & 0xffffffff
 
 
-# Sub-index layout of one configuration: K_STRIDE per redraw attempt, then the
-# per-row seed stream, which no redraw may reach.
 K_STRIDE = 64
 K_RUN_SEED = 1000000
 MAX_ATTEMPTS = 16
@@ -76,24 +61,21 @@ MAX_BUILD_ERRORS = 8
 
 STRESS_BLOCK_SET = (0, 1, 2, 4, 8, 16, 32, 64)
 CPU_WORDS_PER_REGION_SET = (8, 16, 32, 64, 128, 256)
-# Interconnect noise is not drawn: hetlitmus/docs/environment-design.md "Tuning".
+# Interconnect noise is not drawn.
 # For the interconnect noise logic before its removal, see
 # git show 1f7a5e9f9b5d:hetlitmus/tune_stress.py
 CPU_STRESS_THREADS_MAX = 12
 
-# Every knob the search turns, in one joint draw.  Order is the stream: a knob
-# inserted above another redraws it into a different value.
 KNOBS = ("HET_GPU_MEM_STRESS_PCT", "HET_GPU_MEM_STRESS_ROUNDS", "HET_GPU_MEM_STRESS_PATTERN",
          "HET_GPU_PRE_STRESS_PCT", "HET_GPU_PRE_STRESS_ROUNDS", "HET_GPU_PRE_STRESS_PATTERN",
          "HET_GPU_WORDS_PER_REGION", "HET_GPU_SPREAD", "HET_GPU_STRESS_ASSIGN",
          "HET_BLOCK_DIM", "HET_GPU_STRESS_BLOCKS",
          "HET_CPU_STRESS_THREADS", "HET_CPU_SCRATCH_WORDS", "HET_CPU_SPREAD",
          "HET_CPU_WORDS_PER_REGION", "HET_CPU_STRESS_PATTERN", "HET_CPU_PRELOAD_PCT",
-         "HET_GPU_SCRATCH_WORDS")           # derived, never drawn
+         "HET_GPU_SCRATCH_WORDS")
 
 
 def draw_knobs(seed, i, env, attempt):
-    """One joint draw at attempt `attempt'; two sub-indices per knob."""
     base = attempt * K_STRIDE
 
     def d(j):
@@ -101,11 +83,10 @@ def draw_knobs(seed, i, env, attempt):
 
     line = 1 << (2 + d(12) % 6)
     targets = 1 + d(14) % 16
-    # Even, from the width this test's scope tree needs to the upstream ceiling.
     lo = env.block_dim_lo
     bdim = lo + 2 * (d(18) % ((256 - lo) // 2 + 1))
     blocks = -1 if d(20) % 2 == 0 else STRESS_BLOCK_SET[d(21) % len(STRESS_BLOCK_SET)]
-    # -1 = auto and 0 = none are distinct requests, so both sit in the one set.
+    # Draws -1 (auto), 0 (no CPU stress) or 1..e_hi threads.
     e_hi = min(CPU_STRESS_THREADS_MAX, max(0, env.spare_cores))
     e_pick = d(22) % (e_hi + 2)
     stress_threads = -1 if e_pick == 0 else e_pick - 1
@@ -134,11 +115,8 @@ def draw_knobs(seed, i, env, attempt):
 
 
 def violated(k, env):
-    """The draw-time layer: what a configuration cannot ask for, before a
-    compiler or a device is spent on it."""
     if k["HET_CPU_SPREAD"] * k["HET_CPU_WORDS_PER_REGION"] > k["HET_CPU_SCRATCH_WORDS"]:
         return "spread x words per region exceeds the CPU stress scratchpad"
-    # An auto (-1) population that realizes empty is the launch-time layer's to kill.
     if k["HET_GPU_STRESS_BLOCKS"] == 0 and k["HET_GPU_MEM_STRESS_PCT"] > 0:
         return "mem-stress asked for with an explicit zero stress-block population"
     n = k["HET_CPU_STRESS_THREADS"]
@@ -150,8 +128,6 @@ def violated(k, env):
 
 
 def draw_config(seed, i, env):
-    """Configuration i.  A violated draw redraws at fresh sub-indices and
-    consumes NO configuration index."""
     for attempt in range(MAX_ATTEMPTS):
         k = draw_knobs(seed, i, env, attempt)
         why = violated(k, env)
@@ -163,27 +139,19 @@ def draw_config(seed, i, env):
 
 
 def dflags(k):
-    """The knob vector as the compiler sees it.  No parentheses: make expands
-    this into a shell command line, where `(' opens a subshell."""
     return ["-D%s=%d" % (n, k[n]) for n in KNOBS]
 
 
 def run_seed(seed, i, row_ix):
-    """This row's HET_SEED, off the tuner's own stream: 31 bits, the width the
-    harness reads a seed base at."""
+    """31 bits, the width the harness reads a seed base at."""
     return het_draw(seed, i, K_RUN_SEED + row_ix) & 0x7fffffff
 
-
-# ---------------------------------------------------------------------------
-# The target: what the emitted corpus and this machine allow.
-# ---------------------------------------------------------------------------
 
 class Env(object):
     pass
 
 
 def named_tests(path):
-    """--tests: one name per line, `#' and blanks ignored, first field wins."""
     if not os.path.isfile(path):
         die("--tests %s is not a file" % path)
     out = []
@@ -199,8 +167,6 @@ def named_tests(path):
 
 
 def probe(a, tests):
-    """The emitted corpus and the machine, read once: the per-test floors the
-    draw needs, and the vendor build.sh will pick."""
     env = Env()
     env.emit = os.path.abspath(a.emit_dir)
     if not os.path.isdir(env.emit):
@@ -244,7 +210,6 @@ def probe(a, tests):
     env.compiler_var = "NVCC" if env.vendor == "cuda" else "HIPCC"
     env.compiler = "nvcc" if env.vendor == "cuda" else "hipcc"
     env.cpu_test = cpu_test
-    # Even, and at least the lanes one block must hold.
     env.block_dim_lo = max(2, lanes + (lanes & 1))
     if env.block_dim_lo > 256:
         die("the tuning set needs %d lanes per block, past the 256 the draw "
@@ -255,13 +220,7 @@ def probe(a, tests):
     return env
 
 
-# ---------------------------------------------------------------------------
-# One configuration: build, then run every row serially.
-# ---------------------------------------------------------------------------
-
 def build(a, env, k, timeout):
-    """`make clean && make <vendor>-bin' per dir, through build.sh: the knobs
-    ride the compiler variable, which make expands into the command line."""
     e = dict(os.environ)
     e["RESULTS"] = a.out
     e[env.compiler_var] = "%s %s" % (e.get(env.compiler_var) or env.compiler,
@@ -275,7 +234,6 @@ def build(a, env, k, timeout):
                            timeout=timeout)
     except subprocess.TimeoutExpired:
         return "build timed out after %d s" % timeout
-    # rc 2 is build.sh refusing its arguments, arch or toolchain: no redraw fixes it.
     if r.returncode == 2:
         die("build.sh rc=2: %s" % r.stderr.strip()[-300:])
     if r.returncode != 0:
@@ -292,8 +250,6 @@ OVERCAP_RE = re.compile(r"^grid (\d+) exceeds co-resident cap (\d+)")
 
 
 def launch_refusal(line):
-    """The launch-time layer: the two lines that say the realised geometry is
-    not the drawn one, both printed before the first iteration."""
     if EMPTY_RE.match(line):
         return "the mem-stress population is empty"
     m = OVERCAP_RE.match(line)
@@ -303,7 +259,6 @@ def launch_refusal(line):
 
 
 def realized(lines):
-    """What the driver says it actually got, beside what was drawn."""
     out = {}
     for line in lines:
         m = GEOM_RE.match(line)
@@ -322,8 +277,6 @@ def realized(lines):
 
 
 def kv_line(line, tag):
-    """A `TAG <name> key=value ...' machine line's fields, or None: the human
-    block sharing the prefix ends its second field in `:'."""
     if not line.startswith(tag + " "):
         return None
     f = line.split()
@@ -345,8 +298,6 @@ def inum(kv, key):
 
 
 def run_row(exe, cwd, e, timeout):
-    """One invocation, read as it arrives so a launch-time refusal is caught in
-    seconds rather than in a full run."""
     t0 = time.time()
     p = subprocess.Popen([exe], cwd=cwd, env=e, stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, bufsize=0)
@@ -381,8 +332,6 @@ def run_row(exe, cwd, e, timeout):
 
 
 def score(lines, max_discard_pct):
-    """The score-time layer: weak iterations, the effort behind them, and
-    whether this run is a reading at all."""
     hs = None
     weak, live = 0, {}
     for line in lines:
@@ -406,13 +355,11 @@ def score(lines, max_discard_pct):
     if R < 1:
         rec.update(status="error", why="the harness scored no run")
     elif usable == 0:
-        # het_verdict()'s COLD-INVALID: a mechanism the build asked for was dead,
-        # and a search scoring such a run optimises the dead mechanism.
+        # COLD-INVALID: scoring it would optimise a dead mechanism.
         rec.update(status="excluded",
                    why="not one of %d run(s) was usable (every run "
                        "COLD-INVALID)" % R)
     elif rec["k_eff"] < rec["k"]:
-        # het_stats_compute()'s decode guard: a degenerate sighting's count is no reading.
         rec.update(status="excluded",
                    why="%d degenerate sighting(s), outside k_eff"
                        % (rec["k"] - rec["k_eff"]))
@@ -428,8 +375,6 @@ def score(lines, max_discard_pct):
 
 
 def run_config(a, env, log, i, k):
-    """Every row of one configuration, serially: a stress configuration owns the
-    machine while it is measured."""
     t0 = time.time()
     why = build(a, env, k, a.timeout)
     if why is not None:
@@ -480,10 +425,6 @@ def run_config(a, env, log, i, k):
     return "scored"
 
 
-# ---------------------------------------------------------------------------
-# The log: append-only, and the only state the search keeps.
-# ---------------------------------------------------------------------------
-
 class Log(object):
     def __init__(self, path):
         self.fh = open(path, "a")
@@ -519,8 +460,6 @@ def log_meta(rows):
 
 
 def check_knob_set(path, i, k, verb):
-    """Die unless configuration i was drawn over exactly KNOBS: a log from
-    another knob set is neither ranked nor continued here."""
     missing = [n for n in KNOBS if n not in k]
     unknown = [n for n in k if n not in KNOBS]
     if missing or unknown:
@@ -532,8 +471,6 @@ def check_knob_set(path, i, k, verb):
 
 
 def search_ident(a, env):
-    """Every input the draw, the row seeds, the build or the scoring reads: a
-    log continues only the search whose meta line matches all of them."""
     return {"seed": a.seed, "iters": a.iters, "target": a.target,
             "vendor": env.vendor, "arch": a.arch or "", "emit_dir": env.emit,
             "tests": env.tests, "cores": env.ncores, "cpu_test": env.cpu_test,
@@ -541,10 +478,6 @@ def search_ident(a, env):
             "max_discard_pct": env.max_discard_pct,
             "cap_cpu": a.cap_cpu, "cap_gpu": a.cap_gpu}
 
-
-# ---------------------------------------------------------------------------
-# Passes.
-# ---------------------------------------------------------------------------
 
 def search(a):
     tests = named_tests(a.tests)
@@ -609,8 +542,6 @@ def rank(a):
     meta = log_meta(rows)
     target = a.target or meta.get("target") or ""
     ok = {r["i"] for r in rows if r.get("type") == "config" and r["status"] == "scored"}
-    # A resumed index reruns every row, so its last record per row is the
-    # attempt that reached the config line; the interrupted attempt's are not.
     last = {}
     for r in rows:
         if r.get("type") == "run":
@@ -651,8 +582,6 @@ def rank(a):
     for i in sorted(revealed, key=lambda i: (-len(revealed[i]), i)):
         print("  config %-5d %s" % (i, ", ".join(sorted(revealed[i]))))
 
-    # The greedy cover from the argmax leader: what a campaign taking one
-    # configuration would never see, and the cheapest configurations that add it.
     lead = min(wins, key=lambda i: (-wins[i], i))
     covered = set(revealed.get(lead, ()))
     allrows = set()

@@ -14,52 +14,34 @@
 /* "http://www.cecill.info". We also give a copy in LICENSE.txt.            */
 /****************************************************************************/
 
-/* HetLitmus: the cross-device rendezvous and the per-iteration slot layout it
- * pairs.  Iteration n of the persistent loop begins when every participant has
- * arrived at a shared counter, and then touches slot n ALONE on both sides, so
- * iteration n's outcome is read back from slot n with no search and no decoding.
- * An iteration whose rendezvous timed out is discarded, never scored.
- * Design: hetlitmus/docs/environment-design.md "Rendezvous". */
-
 #ifndef HET_RDV_H
 #define HET_RDV_H
 
-#include "het_stress.h"   /* the vendor runtime header the arrival atomics need */
+#include "het_stress.h"
 
-/* Distance between one iteration's slot and the next, in elements of the shared
-   arrays (int).  32 ints = 128 B, one cache line per slot, so two iterations
-   share neither a word nor a line, and a location costs SIZE_OF_TEST * 128 B. */
+/* In ints: 32 = 128 B, so two iterations never share a cache line. */
 #ifndef HET_SLOT_STRIDE_WORDS
 #define HET_SLOT_STRIDE_WORDS 32
 #endif
 
-/* How long a participant waits for the others, in polls, before giving up on
-   this iteration.  Both are PLACEHOLDERS -- no target has been measured -- so
-   every null they produce says uncalibrated.  Both are overridable per run. */
 #ifndef HET_CAP_GPU
 #define HET_CAP_GPU 16384
 #endif
 #ifndef HET_CAP_CPU
 #define HET_CAP_CPU 524288
 #endif
-/* 1 once the two caps above are measured on this harness's target. */
 #ifndef HET_CAP_CALIBRATED
 #define HET_CAP_CALIBRATED 0
 #endif
 
-/* The post-release delay, in spins: each participant leaves after 0..this many
-   spins of its own, so the iterations sweep the relative phase of the two
-   devices instead of repeating one alignment. */
 #ifndef HET_RELEASE_JITTER_SPINS
 #define HET_RELEASE_JITTER_SPINS 64
 #endif
 
-/* Called while the host waits, or NULL.  A host spin that never enters the
-   runtime can starve the grid it waits for [CudaGuide "CUDA C++ Execution
-   model"]; CUDA passes one where the grid may not be resident, HIP NULL. */
+/* A host spin that never enters the runtime can starve the grid it waits for
+   [CudaGuide "CUDA C++ Execution model"]. */
 typedef void (*het_poke_fn)(void);
 
-/* Host polls between two runtime pokes; a power of two (used as a mask). */
 #ifndef HET_RDV_POKE_EVERY
 #define HET_RDV_POKE_EVERY 1024
 #endif
@@ -67,11 +49,8 @@ typedef void (*het_poke_fn)(void);
 #error "HET_RDV_POKE_EVERY must be a power of two"
 #endif
 
-/* Arrive, then poll: relaxed [Bagchi26 sec 5.3], no fence written and none
-   emitted on AArch64 or either GPU side; x86_64's arrival is a locked RMW, a
-   full barrier that drains the previous iteration's tested stores
-   (hetlitmus/docs/environment-design.md "Rendezvous").  Each caller adds 1
-   per iteration to a monotone counter; 1 = saw it, 0 discards its iteration. */
+/* Relaxed on purpose: an acquire poll self-invalidates the Hopper L1
+   [Bagchi26 sec 5.3], erasing the cache state the iteration races on. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
 __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
                                             uint32_t _cap) {
@@ -80,9 +59,7 @@ __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
   uint32_t _i = 0;
   while (_v < _target && _i < _cap) {
     _i++;
-    /* Briefly back off the AMD wave between system-scope polls. */
-    /* Its benefit for this rendezvous is unmeasured. */
-    /* https://clang.llvm.org/doxygen/amdgpuintrin_8h_source.html#l00156 */
+    /* Back-off as in [AMDGPUIntrin] __gpu_thread_suspend; benefit unmeasured. */
     __builtin_amdgcn_s_sleep(1);
     _v = __hip_atomic_load(_ctr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);
   }
@@ -102,8 +79,6 @@ __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
 }
 #endif
 
-/* The host half.  [_poke], when not NULL, runs once per HET_RDV_POKE_EVERY
-   polls. */
 static inline int het_rdv_host(uint64_t *_ctr, uint64_t _target, long _cap,
                                het_poke_fn _poke) {
   uint64_t _v = __atomic_fetch_add(_ctr, 1ull, __ATOMIC_RELAXED) + 1ull;
@@ -116,9 +91,8 @@ static inline int het_rdv_host(uint64_t *_ctr, uint64_t _target, long _cap,
   return _v >= _target;
 }
 
-/* The delay above, its draw made per participant per iteration by the caller.
-   The body is an EMPTY volatile asm: a spin that touched memory would add
-   traffic to the window the delay exists to sweep. */
+/* Empty asm on purpose: a spin that touched memory would add traffic to the
+   window the delay sweeps. */
 __device__ __host__ static inline void het_rdv_jitter(uint32_t _draw,
                                                       uint32_t _max) {
   uint32_t _k = (_max > 0u) ? (_draw % (_max + 1u)) : 0u;

@@ -1,17 +1,8 @@
-/* =========================================================================
- * het_cpu_stress.h -- CPU-side (half 1) and interconnect (half 2) stress, the
- * levers on the cross-device window per-device stress never reaches.
- * Emitted verbatim into every harness dir; edit this file, never a copy.
- * <test>_cpu.c includes it with HET_CPU_STRESS_IMPL and compiles the bodies;
- * the .cu / .hip see only knobs, structs and declarations -- the bodies are
- * host-ISA inline asm nvcc must NOT meet.
- * Design: hetlitmus/docs/environment-design.md "Interconnect stress".
- * ========================================================================= */
 #ifndef HET_CPU_STRESS_H
 #define HET_CPU_STRESS_H
 
-/* NO pthread header here: x86 glibc's does not cross-assemble for AArch64
-   (litmus/het-runtime/README.md). */
+/* NO pthread header here: x86 glibc's pthread types carry regparm, which
+   clang rejects when cross-assembling for AArch64. */
 #include <stdint.h>
 #include <stddef.h>
 
@@ -19,57 +10,55 @@
 extern "C" {
 #endif
 
-/* Half 1 knobs -- CPU-side stress.  Every numeric is a seed, not a tuning
- * [Alglave11 sec 4] [Kirkham20 sec 6.4]; all are -D-overridable. */
+/* Untuned defaults: tune them on the machine under test, since settings tuned
+ * on one chip may not suit another [Alglave11 sec 4] [Kirkham20 sec 6.4]. */
 #ifndef HET_CPU_STRESS_THREADS
-#define HET_CPU_STRESS_THREADS (-1)  /* -1 = auto: every spare core (see main()) */
+#define HET_CPU_STRESS_THREADS (-1)  /* -1 = auto: every spare core */
 #endif
 #ifndef HET_CPU_SCRATCH_WORDS
-#define HET_CPU_SCRATCH_WORDS 262144   /* 2 MiB of uint64: the stress scratchpad  */
+#define HET_CPU_SCRATCH_WORDS 262144   /* uint64 words */
 #endif
 #ifndef HET_CPU_SPREAD
-#define HET_CPU_SPREAD 8          /* spread m [Sorensen16]: distinct lines hit   */
+#define HET_CPU_SPREAD 8          /* spread m [Sorensen16 sec 3.4] */
 #endif
 #ifndef HET_CPU_WORDS_PER_REGION
-#define HET_CPU_WORDS_PER_REGION 8  /* 8 x 8 B = one 64 B line per region        */
+#define HET_CPU_WORDS_PER_REGION 8  /* 8 x 8 B = one 64 B line */
 #endif
 #ifndef HET_CPU_STRESS_PATTERN
 #define HET_CPU_STRESS_PATTERN 0  /* sigma: 0=st;st 1=st;ld 2=ld;st 3=ld;ld [Sorensen16 sec 3.3] */
 #endif
 #ifndef HET_CPU_PRELOAD_PCT
-#define HET_CPU_PRELOAD_PCT 50    /* % of iterations preloading the test vars    */
+#define HET_CPU_PRELOAD_PCT 50    /* % of iterations */
 #endif
 #ifndef HET_CPU_AFFINITY
-#define HET_CPU_AFFINITY 1        /* pin threads to cores (sched_setaffinity)    */
+#define HET_CPU_AFFINITY 1
 #endif
 #ifndef HET_CPU_FIRST_CORE
-#define HET_CPU_FIRST_CORE 0      /* test, noise, stress threads pin upward from it */
+#define HET_CPU_FIRST_CORE 0
 #endif
 #ifndef HET_CPU_RESERVE_CORES
-#define HET_CPU_RESERVE_CORES 2   /* cores left unpinned for the OS and the driver */
+#define HET_CPU_RESERVE_CORES 2
 #endif
 
-/* Half 2 knobs -- interconnect: the noise knobs, consumed on both sides.  Both
- * halves default to off: hetlitmus/docs/environment-design.md "Tuning". */
+/* Interconnect noise defaults to off: its effect is unmeasured. */
 #ifndef HET_NOISE_MB
-#define HET_NOISE_MB 8192         /* the noise buffer [Fusco24 sec III-C]; it must
-                                     EXCEED the last-level cache (HET_LLC_MB)   */
+#define HET_NOISE_MB 8192         /* [Fusco24 sec III-C]; must exceed HET_LLC_MB */
 #endif
 #ifndef HET_CPU_NOISE_THREADS
-#define HET_CPU_NOISE_THREADS 0   /* host half: threads, one slice of the buffer each */
+#define HET_CPU_NOISE_THREADS 0
 #endif
 #ifndef HET_GPU_NOISE_BLOCKS
-#define HET_GPU_NOISE_BLOCKS 0    /* device half: extra blocks of the PERSISTENT grid */
+#define HET_GPU_NOISE_BLOCKS 0
 #endif
 #ifndef HET_NOISE_WORDS_PER_ROUND
-#define HET_NOISE_WORDS_PER_ROUND 4096  /* words streamed between stop-flag checks */
+#define HET_NOISE_WORDS_PER_ROUND 4096  /* between stop-flag checks */
 #endif
 #ifndef HET_NOISE_STRIDE
-#define HET_NOISE_STRIDE 1        /* words between consecutive noise reads         */
+#define HET_NOISE_STRIDE 1        /* in words */
 #endif
 
-/* The last-level cache the noise buffer must EXCEED [Fusco24 sec III-E.1]; the
-   build supplies it per target, the default is [Bagchi26 Table 1]'s largest. */
+/* The noise buffer must exceed the last-level cache [Fusco24 sec III-E.1];
+   the fallback is [Bagchi26 Table 1]'s Grace L3. */
 #ifndef HET_LLC_MB
 #define HET_LLC_MB 114
 #define HET_LLC_MB_IS_FALLBACK 1
@@ -86,7 +75,6 @@ extern "C" {
 #if (HET_CPU_WORDS_PER_REGION) < 1
 #error "HET_CPU_WORDS_PER_REGION must be >= 1"
 #endif
-/* Either is a no-op noise stream whose round counters still look healthy. */
 #if (HET_NOISE_STRIDE) < 1
 #error "HET_NOISE_STRIDE must be >= 1 (0 re-reads ONE location for ever: no traffic)"
 #endif
@@ -102,7 +90,6 @@ extern "C" {
 #if (HET_CPU_NOISE_THREADS) > 1024
 #error "HET_CPU_NOISE_THREADS too large (max 1024)"
 #endif
-/* A slice shorter than one round's words re-reads its few words for ever. */
 #if (HET_CPU_NOISE_THREADS) > 0 && \
     (HET_NOISE_MB) * 131072 < (HET_CPU_NOISE_THREADS) * (HET_NOISE_WORDS_PER_ROUND)
 #error "HET_CPU_NOISE_THREADS slices HET_NOISE_MB below one HET_NOISE_WORDS_PER_ROUND per thread"
@@ -111,33 +98,30 @@ extern "C" {
 #error "HET_LLC_MB must be >= 1 (0 silences the below-cache warning for every run)"
 #endif
 
-/* Liveness tally: the ONLY run-time evidence this layer ran. */
 typedef struct het_cpu_tally {
   uint64_t stress_rounds;
   uint64_t stress_accesses;
   uint64_t preload_ops;
   uint64_t cpu_noise_rounds;
   uint64_t cpu_noise_words;
-  uint32_t stress_threads_realised; /* stress threads that entered their loop    */
-  uint32_t aff_failures;      /* sched_setaffinity failures                      */
-  uint32_t preload_inert;     /* 1 => this host has NO cache primitives          */
+  uint32_t stress_threads_realised;
+  uint32_t aff_failures;
+  uint32_t preload_inert;     /* 1 = this host has no cache primitives */
 } het_cpu_tally;
 
-/* Stress-thread arguments; every behavioural field is a runtime value. */
 typedef struct het_cpu_stress_args {
-  volatile uint64_t *scratch; /* DISJOINT host scratchpad, never a test var      */
-  const uint32_t *idx;        /* shuffled region indices (the indirection)       */
-  uint32_t nidx;              /* spread m: regions per round                     */
+  volatile uint64_t *scratch;
+  const uint32_t *idx;
+  uint32_t nidx;
   uint32_t words_per_region;
-  uint32_t pattern;           /* sigma, 0..3                                     */
-  int core;                   /* -1 = unpinned                                   */
-  int *go;                    /* the stop flag, set BEFORE the threads spawn     */
+  uint32_t pattern;
+  int core;                   /* -1 = unpinned */
+  int *go;                    /* set before the threads spawn */
   het_cpu_tally *tally;
 } het_cpu_stress_args;
 
-/* Host noise arguments: `buf' is this thread's slice, disjoint from the others'. */
 typedef struct het_cpu_noise_args {
-  volatile const uint64_t *buf;  /* the device half reads the same buffer        */
+  volatile const uint64_t *buf;
   uint64_t words;
   uint32_t words_per_round;
   uint32_t stride;
@@ -146,8 +130,7 @@ typedef struct het_cpu_noise_args {
   het_cpu_tally *tally;
 } het_cpu_noise_args;
 
-/* The stress schedule: one stateless draw, host and device -- splitmix64 [Vigna15]
-   at index k of stream (seed, who).  hetlitmus/docs/environment-design.md "Rendezvous". */
+/* splitmix64 [Vigna15] */
 #if defined(__CUDACC__) || defined(__HIP_PLATFORM_AMD__) || \
     defined(__HIP_DEVICE_COMPILE__)
 #define HET_DRAW_ATTR __host__ __device__ static inline
@@ -161,31 +144,23 @@ HET_DRAW_ATTR uint32_t het_draw(uint32_t seed, uint32_t who, uint64_t k) {
   z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
   return (uint32_t)(z ^ (z >> 31));
 }
-/* One decision per (who, k).  The ids are pairwise distinct: a GPU thread's
-   global id stays below 2^31 in an occupancy-bounded grid, these lie above it. */
+/* Above 2^31, so never equal to a GPU thread's global id. */
 #define HET_WHO_CPU(c)   (0x80000000u | (uint32_t)(c))
 #define HET_WHO_GRID     0xFFFFFFFDu
 #define HET_WHO_SCRATCH  0xFFFFFFFEu
 #define HET_WHO_SHUFFLE  0xFFFFFFFFu
-/* k per participant: a GPU test lane draws 2n and 2n+1 at iteration n, the grid
-   its mem-stress toggle at n, a CPU test thread 1+2*nvars per iteration. */
 
-/* API.  Bodies are compiled ONLY into <test>_cpu.c (HET_CPU_STRESS_IMPL). */
-int      het_cpu_affinity(int core, het_cpu_tally *t);  /* 0 = pinned, -1 = failed */
+int      het_cpu_affinity(int core, het_cpu_tally *t);
 int      het_cpu_ncores(void);
-/* Returns the hints issued: the caller flushes once, no atomic bump in the tested loop. */
 uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t seed,
                          uint32_t who, uint64_t k0, int pct);
-/* HET_CPU_PRELOAD_LIVE for the .cu driver, which cannot read the macro. */
 int      het_cpu_preload_live(void);
-/* 0 = drawn, -1 = none available, which the caller must report. */
 int      het_seed_entropy(uint32_t *out);
-void    *het_cpu_stress(void *a);  /* pthread body; NOT a pthread dependency       */
-void    *het_cpu_noise(void *a);   /* pthread body; the host half of the noise pair*/
-/* One write per page: Linux maps every untouched anonymous page to ONE zero
-   page, so an unwritten buffer streams one line and stresses nothing. */
+void    *het_cpu_stress(void *a);
+void    *het_cpu_noise(void *a);
+/* Untouched anonymous pages all map to one zero page, so an unwritten buffer
+   streams one line and stresses nothing. */
 void     het_cpu_first_touch(void *p, size_t bytes);
-/* The permutation is a function of the run's seed. */
 void     het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed);
 
 #ifdef HET_CPU_STRESS_IMPL
@@ -193,8 +168,7 @@ void     het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed);
 #include <unistd.h>
 #include <sys/random.h>
 
-/* 31 bits, so _seed0 + _run cannot wrap into another invocation's range;
-   hetlitmus/campaign.py draws its base at the same width. */
+/* 31 bits, as hetlitmus/campaign.py draws, so _seed0 + _run cannot wrap. */
 int het_seed_entropy(uint32_t *out) {
   uint32_t s;
   if (getrandom(&s, sizeof s, GRND_NONBLOCK) != (ssize_t)sizeof s) return -1;
@@ -202,9 +176,7 @@ int het_seed_entropy(uint32_t *out) {
   return 0;
 }
 
-/* Cache primitives reused from litmus7's litmus/libdir/_{aarch64,x86_64}/_cache.h
- * (CeCILL-B).  Whether `dc civac', cleaning to the point of coherence GH200
- * shares over C2C, reaches the cross-device path is unmeasured. */
+/* Reused from litmus7's litmus/libdir/_{aarch64,x86_64}/_cache.h. */
 #if defined(__aarch64__)
 #define HET_CPU_PRELOAD_LIVE 1
 static inline void het_cache_flush(void *p) {
@@ -225,12 +197,10 @@ static inline void het_cache_touch(void *p) {
   asm __volatile__ ("prefetcht0 0(%[p])" :: [p] "r" (p) : "memory");
 }
 static inline void het_cache_touch_store(void *p) {
-  /* x86 has no store-intent hint litmus7 found, so prefetcht0 again. */
   asm __volatile__ ("prefetcht0 0(%[p])" :: [p] "r" (p) : "memory");
 }
 #else
 #define HET_CPU_PRELOAD_LIVE 0
-/* No cache primitives: het_cpu_preload says so rather than counting hints it never issued. */
 static inline void het_cache_flush(void *p) { (void)p; }
 static inline void het_cache_touch(void *p) { (void)p; }
 static inline void het_cache_touch_store(void *p) { (void)p; }
@@ -241,10 +211,9 @@ int het_cpu_ncores(void) {
   return (n < 1) ? 1 : (int)n;
 }
 
-/* litmus7's write_one_affinity recipe (libdir/_linux_affinity.c).  Divergence:
- * a failed pin is counted and reported by main(), never errexit()ed mid-campaign. */
+/* Adapted from litmus7's write_one_affinity (libdir/_linux_affinity.c) */
 int het_cpu_affinity(int core, het_cpu_tally *t) {
-  if (core < 0) return 0;                    /* unpinned by request */
+  if (core < 0) return 0;
   cpu_set_t m;
   CPU_ZERO(&m);
   CPU_SET(core, &m);
@@ -255,15 +224,13 @@ int het_cpu_affinity(int core, het_cpu_tally *t) {
   return 0;
 }
 
-/* Preload runs BEFORE het_run_P<n>, never inside it: a cache hint changes
- * residency, not program order, and its "memory" clobber keeps it there. */
 int het_cpu_preload_live(void) { return HET_CPU_PRELOAD_LIVE; }
 
 uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t seed,
                          uint32_t who, uint64_t k0, int pct) {
 #if HET_CPU_PRELOAD_LIVE == 0
   (void)vars; (void)nvars; (void)seed; (void)who; (void)k0; (void)pct;
-  return 0u;                        /* inert; the driver reports it */
+  return 0u;
 #else
   uint32_t n = 0u;
   for (int i = 0; i < nvars; i++) {
@@ -281,9 +248,8 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t seed,
 #endif
 }
 
-/* Disjoint-scratchpad stress threads [Sorensen16 sec 1], not concurrent copies
- * of the test [Alglave11 sec 3], which do not compose with a persistent kernel.
- * `pattern' stays a RUNTIME field and the accesses volatile, or -O2 deletes them. */
+/* From [Sorensen16 sec 1].  `pattern' stays a runtime field and the accesses
+ * volatile, or -O2 deletes them. */
 void *het_cpu_stress(void *_a) {
   het_cpu_stress_args *a = (het_cpu_stress_args *)_a;
   het_cpu_affinity(a->core, a->tally);
@@ -291,11 +257,10 @@ void *het_cpu_stress(void *_a) {
 
   uint64_t rounds = 0, accesses = 0;
   uint32_t i = 0;
-  /* Atomic every round: a hoisted plain load would never stop the thread. */
   while (__atomic_load_n(a->go, __ATOMIC_RELAXED)) {
     for (uint32_t r = 0; r < a->nidx; r++) {
-      /* Indirect through the shuffled index [Alglave11 sec 3], scratchpad ONLY;
-         consecutive regions are one line apart [Sorensen16 sec 3.4]. */
+      /* Indirection through the shuffled index [Alglave11 sec 3];
+       regions one line apart [Sorensen16 sec 3.4]. */
       volatile uint64_t *l =
         a->scratch + (size_t)a->idx[r] * (size_t)a->words_per_region;
       switch (a->pattern) {
@@ -315,8 +280,7 @@ void *het_cpu_stress(void *_a) {
   return NULL;
 }
 
-/* A host noise thread stream-reads its own slice, the threads dividing the
- * buffer as [Fusco24 sec III-B.2]'s do; `buf' is volatile, no value escapes. */
+/* Slices as in [Fusco24 sec III-B.2]. */
 void *het_cpu_noise(void *_a) {
   het_cpu_noise_args *a = (het_cpu_noise_args *)_a;
   het_cpu_affinity(a->core, a->tally);
@@ -326,7 +290,7 @@ void *het_cpu_noise(void *_a) {
     for (uint32_t c = 0; c < a->words_per_round; c++) {
       (void)a->buf[i];
       i += a->stride;
-      if (i >= a->words) i = 0;    /* wrap: keep the whole working set streaming */
+      if (i >= a->words) i = 0;
     }
     words += a->words_per_round;
     rounds++;
@@ -342,10 +306,9 @@ void het_cpu_first_touch(void *p, size_t bytes) {
   if (ps < 1) ps = 4096;
   volatile unsigned char *b = (volatile unsigned char *)p;
   for (size_t i = 0; i < bytes; i += (size_t)ps) b[i] = 1u;
-  if (bytes > 0) b[bytes - 1] = 1u;      /* the tail page, if bytes is not a multiple */
+  if (bytes > 0) b[bytes - 1] = 1u;
 }
 
-/* Fisher-Yates over het_draw at the run's own seed (seed0 + run). */
 void het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed) {
   uint64_t k = 0;
   for (uint32_t i = 0; i < n; i++) idx[i] = i;

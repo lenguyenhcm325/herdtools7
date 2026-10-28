@@ -50,7 +50,7 @@ type t = [
   | `LISA
   | `JAVA
   | `ASL
-  | `Het (* HetLitmus compound pseudo-arch; see lib/Archs.ml *)
+  | `Het
   ]
 
 val tags : string list

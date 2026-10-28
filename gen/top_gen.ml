@@ -984,9 +984,7 @@ let max_set = IntSet.max_elt
     else
       dump_test_channel_full chan t
 
-(* HetLitmus: the test as device-neutral string fragments, each init atom
-   tagged with its owning proc; `fmt_io` mirrors lib/simpleDumper.ml.
-   hetlitmus/docs/het-litmus-format.md "String erasure". *)
+(* `fmt_io' is copied from lib/simpleDumper.ml: keep the two in step. *)
   let het_cells t =
     let rec fmt_io io = match io with
       | A.Nop -> ""

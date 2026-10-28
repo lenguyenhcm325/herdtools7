@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the rendezvous gate (hetlitmus/docs/environment-design.md
-"Rendezvous"), over one rep render per shape of the emitted template:
-  1 Placement  every GPU lane and CPU thread opens its one iteration loop at
-               the rendezvous, then the release jitter, then the tested body;
-               the readout discards, scores, then banks, once each
-  2 Primitive  het_rdv.h arrives and polls relaxed at system scope on both
-               vendors and the host, with no fence; the jitter spins on an
-               empty asm template
-A miss means a slot pairs an outcome to an iteration the two sides were not
-running together.  Usage: rdvcheck.py
+"""Each iteration opens at the rendezvous, which is relaxed and fence-free.
+Usage: rdvcheck.py
 """
 
 import os
@@ -22,15 +14,11 @@ sys.path.insert(0, HERE)
 import census
 import ptxcheck as ptx
 
-# (-gpu-target, corpus, test): one lane and one thread, two lanes, two
-# threads, and the HIP dialect.
 REPS = (("cuda", census.HET_DIR, "MP-cg-sys-sy.fsc"),
         ("cuda", census.HET_DIR, "3.2W-cgg-sys-plain.fsc"),
         ("cuda", census.HET_DIR, "3.2W-ccg-sys-plain.frel"),
         ("hip", census.X86_DIR, "MP-cg-sys-plain.rlx-x86_64"))
 
-# ---- 1. placement: one letter per anchor line, in file order; E is the
-# closing brace of the last L's loop.  The render's word must spell GRAMMAR.
 EVENTS = (
     ("H", re.compile(r'^  if \(blockIdx\.x == \d+ && threadIdx\.x == \d+\) \{$')),
     ("C", re.compile(r'^static void\* cpu_thread_P\d+\(void\* _a\) \{$')),
@@ -47,14 +35,12 @@ EVENTS = (
     ("S", re.compile(r'^\s*_rec\.iters_scored\+\+;$')),
     ("A", re.compile(r'\badd_outcome_outs\(')),
 )
-# A site in any other form is a `?', which the grammar never accepts.
 LOOSE = re.compile(r'het_rdv_device\(|het_rdv_host\(|het_rdv_jitter\(|'
                    r'add_outcome_outs\(|iters_scored\+\+|iters_discarded\+\+')
 GRAMMAR = re.compile(r'^(HLRJO+E)+(CLrJKE)+LDSAE$')
 
 
 def events(text):
-    """[(letter, line number, match)] over the render."""
     out, end = [], None
     for i, ln in enumerate(text.splitlines(), 1):
         if ln == end:
@@ -85,14 +71,11 @@ def check_placement(name, text):
     return bad
 
 
-# ---- 2. primitive: each body from its signature to the brace in column 0.
 BODY = r'^[^\n]*\b%s\s*\(.*?^\}'
 FORBIDDEN = re.compile(r'acquire|release|acq_rel|seq_cst|consume|fence|'
                        r'syncthreads|s_barrier|threadfence')
 RELAXED = re.compile(r'__ATOMIC_RELAXED|cuda::memory_order_relaxed')
 EMPTY_ASM = re.compile(r'__asm__\s+__volatile__\(\s*""')
-# Per vendor: the system scope a device body names, and the narrower
-# spellings it must not.
 SCOPES = (("cuda::thread_scope_system",
            re.compile(r'cuda::thread_scope_(?!system)\w+')),
           ("__HIP_MEMORY_SCOPE_SYSTEM",

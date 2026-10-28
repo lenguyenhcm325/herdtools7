@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
-"""
-hipbuildcheck.py -- can an AMD harness be built, linked and refused correctly?
-
-Phases: build-arms (`make <test>' refuses by name, hip-bin is phony),
-hip-compile (comp.sh reports a failure on a .hip that does not compile),
-device-image (comp.sh hip-link compiles with hipcc and leaves gfx942 code in
-the ELF), foreign-host (a _cpu.c compiles for its own CPU ISA only: the host
-compiler stops at the foreign render's #error, clang aimed at that ISA
-assembles it, and stops at the native render's), hip-allocator (the shared-mem
-resolver executed under a stub hipDeviceGetAttribute).  A miss is a harness
-that builds into something other than the test, or accepts what it has to
-refuse.  Needs hipcc, clang and gcc, no device.
+"""An AMD harness builds, links for gfx942 and refuses what it must.
+Needs hipcc, clang and gcc, no device.
 """
 import argparse
 import os
@@ -28,22 +18,14 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 LITMUS7 = os.path.join(ROOT, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 
-# The x86_64 render is the one an x86_64 host can LINK, and its GPU column
-# annotates f[sc,sys], so every phase that compiles builds a fence render.
 X86_TEST = "MP-cg-sys-plain.fsc-x86_64"
-AARCH64_TEST = "MP-cg-sys-ra.acq"       # the other CPU ISA's _cpu.c
+AARCH64_TEST = "MP-cg-sys-ra.acq"
 
-# Per `uname -m' word: the ISA word its _cpu.c names, the clang triple that
-# assembles it, and the ELF e_machine (bytes 18-19) its object must report.
 ISA_WORD = {"aarch64": "AArch64", "x86_64": "X86_64"}
 TRIPLE = {"aarch64": "aarch64-linux-gnu", "x86_64": "x86_64-linux-gnu"}
 E_MACHINE = {"aarch64": 183, "x86_64": 62}
 
-# MI300A / MI300X.  Both parts report gfx942; hipDeviceAttributeIntegrated is
-# what separates them, and hip-allocator checks the harness reads it.
 HIP_ARCH = "gfx942"
-# The offload triple hipcc stamps into the executable's .hip_fatbin: a link
-# that produced a host-only binary exits 0 and carries no device code.
 OFFLOAD_TRIPLE = "amdgcn-amd-amdhsa--" + HIP_ARCH
 
 PHASES = ["build-arms", "hip-compile", "device-image", "foreign-host",
@@ -53,7 +35,6 @@ counts = dict.fromkeys(PHASES, 0)
 
 
 def check(phase, ok, msg):
-    """One assertion, counted whether or not it holds."""
     counts[phase] += 1
     if not ok:
         fails.append((phase, msg))
@@ -70,7 +51,6 @@ def have(tool):
 
 
 def emit(tmp, src, sub):
-    """litmus7 -gpu-target hip into <tmp>/<sub>; returns the harness dir."""
     outroot = os.path.join(tmp, sub)
     os.makedirs(outroot, exist_ok=True)
     r = run([LITMUS7, "-gpu-target", "hip", "-set-libdir", LIBDIR, "-o", outroot, src])
@@ -82,8 +62,6 @@ def emit(tmp, src, sub):
 
 
 def fresh(tmp, d, tag):
-    """A pristine copy of harness dir [d] keeping its basename, which names
-    the test and every object."""
     w = os.path.join(tmp, "w-" + tag, os.path.basename(d))
     shutil.rmtree(os.path.dirname(w), ignore_errors=True)
     os.makedirs(os.path.dirname(w))
@@ -92,8 +70,7 @@ def fresh(tmp, d, tag):
 
 
 def has_gfx(binpath):
-    """Does this ELF carry a real gfx942 device image?  Read the bytes, do not
-    trust the linker's exit status."""
+    """Read the ELF bytes: a host-only link also exits 0."""
     if not os.path.isfile(binpath):
         return False
     with open(binpath, "rb") as f:
@@ -101,7 +78,6 @@ def has_gfx(binpath):
 
 
 def e_machine_of(path):
-    """The ELF e_machine an object reports, or None if it is not an ELF."""
     if not os.path.isfile(path):
         return None
     with open(path, "rb") as f:
@@ -111,14 +87,10 @@ def e_machine_of(path):
     return head[18] | (head[19] << 8)
 
 
-# ------------------------------------------------------------------ phases
-
 def build_arms(tmp, d):
     ph = "build-arms"
     print("[%s] `make <test>' refuses on the HIP render; hip-bin is phony" % ph)
     t = os.path.basename(d)
-    # Run, not grep: the hole is the absence of a rule.  The refusal has to
-    # survive ./<test> already existing, when a plain rule is "up to date".
     for present in (False, True):
         w = fresh(tmp, d, "make-%d" % present)
         if present:
@@ -152,8 +124,6 @@ def hip_compile(tmp, d):
     if not check(ph, have("hipcc"), "hipcc not on PATH -- the AMD lane cannot be "
                  "verified here; run it where ROCm exists before trusting the .hip"):
         return
-    # comp.sh ends in an unconditional `compile OK' echo, so only its `set -e'
-    # keeps a failed compile from reporting success.
     w = fresh(tmp, d, "uncompilable")
     inj = "this is not c++;"
     with open(os.path.join(w, os.path.basename(w) + ".hip"), "a") as f:
@@ -163,8 +133,6 @@ def hip_compile(tmp, d):
     check(ph, r.returncode != 0 and "HetLitmus: compile OK" not in r.stdout,
           "comp.sh hip reported success (exit %d) on a .hip that does not "
           "compile:\n%s" % (r.returncode, blob[-1000:]))
-    # A harness broken for its own reasons earns a nonzero rc too, so hipcc
-    # has to echo the injected line back.
     check(ph, inj in blob, "comp.sh hip failed (exit %d) without hipcc naming "
           "the injected %r:\n%s" % (r.returncode, inj, blob[-1000:]))
 
@@ -197,7 +165,6 @@ def device_image(tmp, d):
 
 
 def foreign_host(tmp, dirs):
-    """[dirs]: uname word -> the harness dir whose _cpu.c is that ISA's."""
     ph = "foreign-host"
     m = os.uname().machine
     print("[%s] a _cpu.c compiles for its own CPU ISA only, on %s" % (ph, m))
@@ -213,7 +180,6 @@ def foreign_host(tmp, dirs):
     fcpu = os.path.basename(df) + "_cpu.c"
     ncpu = os.path.basename(dn) + "_cpu.c"
 
-    # (a) the host compiler stops at the foreign render's #error
     r = run(["gcc", "-c", fcpu, "-o", "host.o"], cwd=df)
     blob = r.stdout + r.stderr
     if check(ph, r.returncode != 0, "gcc compiled %s on this %s host -- the CPU "
@@ -223,7 +189,6 @@ def foreign_host(tmp, dirs):
               % (fcpu, ISA_WORD[foreign], blob[-800:]))
     check(ph, not os.path.exists(os.path.join(df, "host.o")),
           "gcc left a host.o for %s after all" % fcpu)
-    # (b) clang aimed at the foreign ISA assembles it into an object of that ISA
     r = run(cross + [fcpu, "-o", "cross.o"], cwd=df)
     if check(ph, r.returncode == 0, "clang --target=%s failed on %s (exit %d):\n%s%s"
              % (TRIPLE[foreign], fcpu, r.returncode, r.stdout[-1500:],
@@ -232,7 +197,6 @@ def foreign_host(tmp, dirs):
         check(ph, got == E_MACHINE[foreign], "cross.o reports e_machine %r, "
               "expected %d -- the cross-assembly did not produce %s code"
               % (got, E_MACHINE[foreign], ISA_WORD[foreign]))
-    # (c) the native render stops the same compiler aimed at the other ISA
     r = run(cross + [ncpu, "-o", "cross.o"], cwd=dn)
     blob = r.stdout + r.stderr
     if check(ph, r.returncode != 0, "%s compiled for %s -- only one of the two "
@@ -241,8 +205,6 @@ def foreign_host(tmp, dirs):
               "%s failed for %s without its #error naming %s:\n%s"
               % (ncpu, TRIPLE[foreign], ISA_WORD[m], blob[-800:]))
 
-
-# --- hip-allocator: the resolver, executed under a stub HIP ----------------
 
 SHIM_H = r"""
 #include <cstdio>
@@ -275,15 +237,11 @@ int main(int argc, char **argv) {
 }
 """
 
-# The resolver is lifted verbatim between these two anchors, so the code this
-# phase executes is the code the harness ships -- not a paraphrase of it.
 RES_BEGIN = re.compile(r"^#define HET_HIP_ALLOC_MANAGED\b", re.M)
 RES_END = re.compile(r"^  return _mode;$", re.M)
 
 
 def build_resolver(tmp, d):
-    """Lift _het_alloc_mode out of the emitted .hip and build it against SHIM_H.
-       Returns the driver path, or None with a reason."""
     t = os.path.basename(d)
     src = open(os.path.join(d, t + ".hip")).read()
     b = RES_BEGIN.search(src)
@@ -322,20 +280,15 @@ def hip_allocator(tmp, d):
     if not check(ph, path is not None, why):
         return
     managed = ("RESOLVED mode=1", "shared-mem mode=managed")
-    # (HET_ALLOC, attribute overrides, exit code, stdout needles, stderr needles)
     rows = [
         (None, {}, 0, managed + ("amd_part_class=APU(integrated)",), ()),
         ("", {}, 0, managed, ()),
         ("auto", {}, 0, managed, ()),
         ("managed", {}, 0, managed, ()),
-        # An unimplemented mode that silently allocated managed memory would
-        # run a DIFFERENT experiment under the requested name.
         ("malloc", {}, 2, (), ("FATAL", "not a shared-memory mode")),
-        # Both device preconditions are fatal [HipRuntimeApi "hipMallocManaged"].
+        # [HipRuntimeApi "hipMallocManaged"]
         (None, dict(managed=0), 2, (), ("hipDeviceAttributeManagedMemory=0",)),
         (None, dict(cma=0), 2, (), ("hipDeviceAttributeConcurrentManagedAccess=0",)),
-        # The discrete part runs, stamped and warned: its histogram must not
-        # read as an MI300A result.
         (None, dict(integrated=0), 0, ("amd_part_class=DISCRETE(not-integrated)",),
          ("WARNING", "not an integrated-APU result")),
     ]
@@ -355,7 +308,7 @@ def hip_allocator(tmp, d):
 
 
 def main():
-    argparse.ArgumentParser().parse_args()   # an unrecognised flag errors out
+    argparse.ArgumentParser().parse_args()
     if not os.access(LITMUS7, os.X_OK):
         raise SystemExit("hipbuildcheck: %s not built (run 'make all')" % LITMUS7)
     tmp = tempfile.mkdtemp(prefix="hipbuildcheck.")

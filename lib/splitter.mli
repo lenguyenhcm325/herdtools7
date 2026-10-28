@@ -36,7 +36,7 @@
 type info = string * string
 type result =
   {
-   (* architecture.  HetLitmus: a het test also has exactly one, [`Het]. *)
+   (* architecture *)
     arch : Archs.t ;
    (* All names of the test grouped *)
     name : Name.t ;

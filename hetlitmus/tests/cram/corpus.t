@@ -1,5 +1,4 @@
-Generated tests, verbatim: a change in hetgen7, diyone7, the diy backends or
-grid.py's renderers shows here as a diff (hetlitmus/docs/corpus-grid.md).
+Generated tests, verbatim.
 
 A gpu-only LISA cell.
   $ cat ../gpu-only/MP-sys-rlx.litmus
@@ -36,7 +35,7 @@ An AArch64 barrier against a GPU sc fence.
   scopes: (sys (gpu (cta P1)))
   exists (1:r0=1 /\ 1:r1=0)
 
-The same-location x86_64 MFence, spelled with the location letter s.
+The same-location x86_64 MFence, spelled with the location letter s (same).
   $ cat ../het-x86_64/CoRR-cg-sys-mf.rlx-x86_64.litmus
   Het CoRR-cg-sys-mf.rlx-x86_64
   "Heterogeneous CoRR-cg-sys-mf.rlx-x86_64: per-proc device assignment cpu,gpu (cpu=x86_64, gpu=LISA)"

@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""
-hipsrccheck.py -- the HIP source gate (hetlitmus/docs/faithfulness.md).
-
-One .litmus against the .hip litmus7 renders for it.  Every guarded GPU lane
-is compared line for line with the lane the emitter writes for that column, so
-each model op stands as its mapped builtin with its constants, comment and
-operands, in column order, inside the one `#pragma unroll 1' loop behind the
-rendezvous and the jitter, with nothing else in the lane; each x86_64 CPU
-column is compared with the asm literals of its _cpu.c body.  A miss is an
-emitter that renders an annotation as a different op, order, scope or operand,
-or drops it.  `tokens.sh hipsrc' sweeps both corpora.
+"""Each .hip lane and x86_64 CPU body matches its .litmus column, line for line.
 
 Usage:  hipsrccheck.py TEST.litmus
 Exit 0 = PASS, 1 = FAIL (the first differing line), 2 = an annotation outside
@@ -23,19 +13,14 @@ import shutil
 import sys
 import tempfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))            # hetlitmus/verify
+HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ptxcheck as ptx
 
 CompletenessError = ptx.CompletenessError
 
 
-# ===========================================================================
-# 1. The mapping table -- litmus/HipLang.ml's own, as the expected side.  It is
-#    also the completeness guard: a token that is not a key here hard-fails.
-# ===========================================================================
-
-# HipLang.hip_memory_order [HipAtomicHeader], [D75917].
+# [HipAtomicHeader] [D75917]
 HIP_ORDER = {
     "relaxed": "__ATOMIC_RELAXED",
     "acquire": "__ATOMIC_ACQUIRE",
@@ -44,30 +29,23 @@ HIP_ORDER = {
     "sc":      "__ATOMIC_SEQ_CST",
 }
 
-# HipLang.hip_scope: the scope ladder is the HIP header's [HipAtomicHeader].
+# [HipAtomicHeader]
 HIP_SCOPE = {
     "cta": "__HIP_MEMORY_SCOPE_WORKGROUP",
     "gpu": "__HIP_MEMORY_SCOPE_AGENT",
     "sys": "__HIP_MEMORY_SCOPE_SYSTEM",
 }
 
-# HipLang.hip_fence_scope: the AMDHSA sync-scope string __builtin_amdgcn_fence
-# takes second [D75917], [AMDGPUUsage "Memory Scopes"].
+# [D75917] [AMDGPUUsage "Memory Scopes"]
 HIP_FENCE_SCOPE = {
     "cta": "workgroup",
     "gpu": "agent",
     "sys": "",
 }
 
-# litmus/gpuLang.ml nregs_layout: the result slots one gpu-only proc owns in __out.
 GPU_OUT_STRIDE = 8
 
 
-# ===========================================================================
-# 2. The expected side: the lane the emitters write for one column
-# ===========================================================================
-
-# The operand tail of a GPU cell:  w[o,s] <var> <value>   r[o,s] <dst> <var>   f[o,s]
 CELL_TAIL = {
     "w": re.compile(r'^(?P<a>[A-Za-z_]\w*)\s+(?P<b>\S+)$'),
     "r": re.compile(r'^(?P<a>r\d+)\s+(?P<b>[A-Za-z_]\w*)$'),
@@ -76,8 +54,6 @@ CELL_TAIL = {
 
 
 def gpu_cells(cells):
-    """A GPU column's cells as (kind, order, scope, opnd1, opnd2); a token or a
-    tail outside the tables hard-fails."""
     out = []
     for c in cells:
         c = c.strip()
@@ -102,8 +78,6 @@ def gpu_cells(cells):
 
 
 def regs_of(cells):
-    """The lane's result registers: the load destinations, first seen first
-    (litmus/gpuLang.ml result_regs)."""
     regs = []
     for kind, _o, _s, a, _b in cells:
         if kind == 'r' and a not in regs:
@@ -112,8 +86,6 @@ def regs_of(cells):
 
 
 def op_lines(ind, cells, slotted):
-    """The lines HipLang.dump_instr writes for a column's cells; [slotted]
-    hands every access iteration _n's own slot of its location."""
     out = []
     for kind, order, scope, a, b in cells:
         o, s = HIP_ORDER[order], HIP_SCOPE[scope]
@@ -132,7 +104,6 @@ def op_lines(ind, cells, slotted):
 
 
 def het_lane(blk, lane, pidx, cells):
-    """The het lane of litmus/hetGpuFile.ml dump_test_lane for one GPU proc."""
     regs = regs_of(cells)
     body = ["  if (blockIdx.x == %d && threadIdx.x == %d) {" % (blk, lane)]
     body += ["    int %s = 0;" % r for r in regs]
@@ -146,7 +117,6 @@ def het_lane(blk, lane, pidx, cells):
     ]
     body += op_lines("      ", cells, slotted=True)
     body += ["      bufP%d_%d[_n] = %s;" % (pidx, i, r) for i, r in enumerate(regs)]
-    # ONE lane publishes the iteration clock the stress blocks poll.
     if (blk, lane) == (0, 0):
         body.append("      het_scratch_bump(_gpu_iter);")
     body += ["    }", "  }"]
@@ -154,7 +124,6 @@ def het_lane(blk, lane, pidx, cells):
 
 
 def gpu_only_lane(blk, lane, pidx, cells):
-    """The lane of litmus/gpuLang.ml dump_test for one gpu-only proc."""
     regs = regs_of(cells)
     body = ["  if (blockIdx.x == %d && threadIdx.x == %d) {" % (blk, lane)]
     body += ["    int %s = 0;" % r for r in regs]
@@ -165,8 +134,6 @@ def gpu_only_lane(blk, lane, pidx, cells):
     return body
 
 
-# The x86_64 CPU column as litmus7's ASMLang prints it: a global becomes its
-# `%[g]' operand, a 32-bit register `%k[r..]', a 64-bit one `%[r..]'.
 X86_REGS = "ax|bx|cx|dx|si|di|bp|sp"
 
 
@@ -176,17 +143,11 @@ def x86_cell(c):
     return re.sub(r'%r(' + X86_REGS + r')\b', r'%[r\1]', c)
 
 
-# ===========================================================================
-# 3. The observed side
-# ===========================================================================
-
 KERNEL_OPEN = re.compile(r'^__global__ void litmus_\w+\(')
 LANE_GUARD = re.compile(r'^  if \(blockIdx\.x == (\d+) && threadIdx\.x == (\d+)\) \{$')
 
 
 def lane_blocks(hip_text, path):
-    """Each guarded lane of the kernel as ((blk, lane), [lines]), from its
-    guard to the closing brace at the guard's indentation."""
     lines = hip_text.splitlines()
     start = next((i for i, l in enumerate(lines) if KERNEL_OPEN.match(l)), None)
     if start is None:
@@ -209,13 +170,10 @@ def lane_blocks(hip_text, path):
 
 X86_BLOCK = re.compile(r'#if defined\(__x86_64__\)(.*?)^#else', re.S | re.M)
 X86_BODY = re.compile(r'^(?:__attribute__\(\(noinline\)\)\s*)?static void code(\d+)\(', re.M)
-# One instruction per literal, closed by its newline escape; the `#START',
-# `#_litmus_P<n>_<i>' and `#END' markers carry no op.
 ASM_LIT = re.compile(r'"([^"\n]*)\\n(?:\\t)?"')
 
 
 def x86_bodies(cpu_c_text, path):
-    """Every body of the real x86_64 block as (proc, [instructions])."""
     m = X86_BLOCK.search(cpu_c_text)
     if not m:
         raise CompletenessError("%s carries no `#if defined(__x86_64__)' block" % path)
@@ -228,12 +186,7 @@ def x86_bodies(cpu_c_text, path):
     return out
 
 
-# ===========================================================================
-# 4. The check
-# ===========================================================================
-
 def diff_lines(who, want, got):
-    """The first line on which the render departs from the expected lane."""
     for i in range(max(len(want), len(got))):
         w = want[i] if i < len(want) else "<end of lane>"
         g = got[i] if i < len(got) else "<end of lane>"
@@ -244,7 +197,6 @@ def diff_lines(who, want, got):
 
 
 def check(litmus_path):
-    """(name, kind, findings) for one .litmus; no finding means PASS."""
     text = ptx.read_litmus(litmus_path)
     name, kind = ptx.litmus_name(text), ptx.litmus_kind(text)
     procs, rows = ptx.parse_body(text)

@@ -14,10 +14,6 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the compound (CPU+GPU) harness emitter -- it parses the test,
-   derives the harness record its file emitters render, and writes the
-   directory.  Design: hetlitmus/docs/het-emission.md. *)
-
 open Answer
 
 open HetDialect
@@ -56,7 +52,6 @@ end
            string list -> Proc.t -> Cpu.Out.t -> unit
        end) =
     struct
-      (* GPU side is fixed: LISA/Bell frontend + CudaLang/HipLang lowering. *)
       module GpuInstr = Instr.No(struct type instr = BellBase.instruction end)
       module GpuV = Int64Constant.Make(GpuInstr)
       module Gpu = LISAArch_litmus.Make(GpuV)
@@ -101,7 +96,6 @@ end
         end
       module AllocCpu = SymbReg.Make(AllocArchCpu)
 
-      (* Verbatim payloads: litmus/libdir/_outs.{h,c} and litmus/het-runtime/*.h. *)
       let outs_h_content = HetPayloads.outs_h
       let outs_c_content = HetPayloads.outs_c
       let het_stress_content = HetPayloads.het_stress_h
@@ -109,18 +103,10 @@ end
       let het_verdict_content = HetPayloads.het_verdict_h
       let het_rdv_content = HetPayloads.het_rdv_h
 
-      (* ================= derivation ================= *)
-      (* One parsed het test becomes a HetHarness.t through the named steps
-         below; each yields one sub-record, and every refusal fires in one of
-         them -- before `run' creates the directory. *)
-
       let prop_of = function
         | ConstrGen.ForallStates p | ConstrGen.ExistsState p
         | ConstrGen.NotExistsState p -> p
 
-      (* The CPU half as a MiscParser test litmus7's own compiler accepts: the
-         cpu-tagged procs, the init lines that reach them, and the condition
-         atoms naming one of their registers. *)
       let cpu_projection parsed =
         let dev_of_proc p =
           let rec find = function
@@ -167,9 +153,6 @@ end
           locations = [] ;
           extra_data = MiscParser.empty_extra ; }
 
-      (* Compiling that projection: the global environment ASMLang dumps
-         against -- an array global by element type, as dump_fun takes them --
-         and one (proc, template, env) per CPU proc. *)
       let compile_cpu doc cpu_parsed =
         let cpu_allocated = AllocCpu.allocate_regs cpu_parsed in
         let cpu_globals, cpu_code = CpuKit.compile_code doc cpu_allocated in
@@ -196,7 +179,6 @@ end
             (Printf.sprintf "%s *%s" (SkelUtil.dump_global_type a ty) a, a))
           addrs
 
-      (* (declaration, name, the register as a condition spells it, type) *)
       let cpu_out_infos out proc =
         List.map
           (fun reg ->
@@ -220,9 +202,6 @@ end
                     proc out) })
           params
 
-      (* The GPU half (reuse CudaLang translation): its procs in program
-         order, the locations they touch, and the launch geometry the scope
-         tree places them in. *)
       let gpu_projection parsed =
         let gpu_prog =
           List.filter_map
@@ -248,9 +227,6 @@ end
             gpu_prog in
         gpus, gpu_globals, n_blocks, block_dim
 
-      (* What each proc makes observable, in outcome-column order: a CPU
-         proc's `Out.final' registers -- those the synthesized CPU condition
-         names, and only those -- and a GPU proc's load destinations. *)
       let observable_columns parsed params =
         List.filter_map
           (fun ((p,annot,_),code) -> match annot with
@@ -272,9 +248,6 @@ end
              (fun ((a,_,_),_) ((b,_,_),_) -> compare a b)
              parsed.MiscParser.prog)
 
-      (* What the driver allocates: the shared globals both devices race on,
-         each once, and one read buffer of SIZE_OF_TEST per observable
-         column. *)
       let memory_map global_env params gpu_globals proc_infos =
         let read_buffers =
           List.concat_map
@@ -298,8 +271,6 @@ end
         { me_gpu_globals = gpu_globals ; me_all_globals = all_globals ;
           me_bufs = read_buffers }
 
-      (* The outcome columns -- registers first, then the condition's
-         locations -- and the condition compiled against those indices. *)
       let outcome_vector tname parsed memory proc_infos =
         let dev_slots want =
           List.concat_map
@@ -333,9 +304,6 @@ end
         { oc_reg_columns = slots ; oc_loc_columns = loc_slots ;
           oc_weak_expr = weak_expr }
 
-      (* The names every rendered file stamps, including the (CPU ISA x GPU
-         dialect) pair this harness is built for.  A het test has at least one
-         gpu proc. *)
       let harness_identity parsed tname dialect =
         let has_gpu =
           List.exists
@@ -354,8 +322,6 @@ end
               CpuF.toolchain.HetCpuFront.isa_name
               dialect.gd_target }
 
-      (* The file emitters' whole input: none of them reads the functor.  This
-         is the one step holding every intermediate at once. *)
       let derive_harness doc parsed identity dialect =
         let global_env,params = compile_cpu doc (cpu_projection parsed) in
         let gpus,gpu_globals,n_blocks,block_dim = gpu_projection parsed in
@@ -378,8 +344,6 @@ end
           h_toolchain = CpuF.toolchain ;
           h_dialect = dialect }
 
-      (* The plan litmus7 prints before anything is written; [target] is the
-         GPU dialect this invocation renders. *)
       let report_plan parsed identity target =
         Printf.eprintf
           "HetLitmus: emitting CPU+GPU harness for %s (%d procs, CPU=%s)\n%!"
@@ -399,10 +363,7 @@ end
           parsed.MiscParser.prog ;
         Printf.eprintf "  pair: %s\n%!" identity.id_pair_label
 
-      (* A compile-only pass derives the harness -- so it takes every refusal
-         this emitter can raise -- and writes nothing. *)
       let run compileonly _hash_env src_name in_chan _out_chan splitted =
-        (* What this invocation put on disk, so a refusal can take it back. *)
         let created = ref None and written = ref [] in
         try
           let dialect = HetDialect.select ~key:(fun d -> d.gd_target) dialects in
@@ -417,12 +378,8 @@ end
             if O.verbose >= 0 then
               report_plan parsed identity dialect.gd_target ;
 
-            (* ================= file emission ================= *)
-            (* Tar.outname places a file under the `-o' target: the directory
-               itself, or the staging directory a `.tar'/`.tgz' target is
-               packed from at the end of the run.  Without `-o' that directory
-               is a temporary one litmus7 deletes at exit, so the harness goes
-               to the cwd instead. *)
+            (* Without `-o', Tar.outname's directory is a temporary one litmus7
+               deletes at exit. *)
             let dir =
               if O.is_out then Tar.outname tname
               else Filename.concat (Sys.getcwd ()) tname in
@@ -455,8 +412,7 @@ end
             Absent
           end
         with e ->
-          (* A refusal leaves nothing behind: this invocation's own files, and
-             the harness directory ONLY if this invocation created it. *)
+          (* Remove the harness directory only if this invocation created it. *)
           List.iter (fun f -> try Sys.remove f with Sys_error _ -> ()) !written ;
           (match !created with
            | Some d -> (try Sys.rmdir d with Sys_error _ -> ())

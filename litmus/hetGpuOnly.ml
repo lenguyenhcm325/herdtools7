@@ -14,11 +14,6 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the GPU-only (`LISA) dispatch arm.  One parse of a scoped
-   LISA/Bell test, rendered in the one dialect `-gpu-target' names.  Upstream
-   litmus7 has no LISA emission path at all -- its arm is `assert false' and
-   LISA reaches only klitmus7.  hetlitmus/docs/gpu-emitters.md. *)
-
 module Make
     (Cfg : GenParser.Config)
     (O : sig
@@ -40,20 +35,14 @@ module Make
       end
     module P = GenParser.Make(Cfg)(Arch')(LexParse)
 
-    (* One (hetDialect row, banner word, renderer) per vendor.  The row is
-       hetDialect's own, so the extension and the `-gpu-target' word have one
-       definition, shared with the compound emitter. *)
     let dialects = [
         HetDialect.cuda_dialect, CudaLang.dialect.GpuLang.gl_kind, CudaLang.dump ;
         HetDialect.hip_dialect,  HipLang.dialect.GpuLang.gl_kind,  HipLang.dump ;
       ]
 
-    (* A compile-only pass parses and checks the test -- so it takes every
-       refusal this arm can raise -- and renders nothing. *)
     let compile compileonly _hash_env name in_chan _out_chan splitted =
       let written = ref [] in
       try
-        (* `-gpu-target' names the one dialect this emission renders (hetDialect.ml). *)
         let d,kind,dump =
           HetDialect.select ~key:(fun (d,_,_) -> d.HetDialect.gd_target) dialects in
         let parsed = P.parse in_chan splitted in
@@ -73,8 +62,7 @@ module Make
             Printf.eprintf "HetLitmus: emitted %s %s\n%!" kind outname ;
           Answer.Absent
         end
-      (* The render is this function's ONLY deliverable, so a refusal must
-         neither be reported as success (HetArch.refused) nor leave a render. *)
+      (* A refusal must neither report success nor leave a render behind. *)
       with e ->
         List.iter (fun f -> try Sys.remove f with Sys_error _ -> ()) !written ;
         if O.nocatch then raise e ;

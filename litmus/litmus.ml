@@ -203,8 +203,6 @@ let opts =
    argkm_withfun "-loop" set_timeloop
      "<n> insert assembly code in a loop of size <n>" ;
    argbool "-kind" Option.kind "show kind information in output" ;
-(* HetLitmus: GPU emission target, read by the `Het and `LISA arms ONLY
-   (litmus/hetDialect.ml). *)
    "-gpu-target", Arg.String HetDialect.set,
    sprintf
      "<%s> HetLitmus: which GPU dialect to render; required by het and \

@@ -14,9 +14,6 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the emitted driver's main(), one phase function per part of it;
-   contract in hetDriverMain.mli. *)
-
 open HetDialect
 
 open HetHarness
@@ -40,7 +37,6 @@ let dump_test_state_alloc dialect memory procs ch =
 let dump_launch_geometry dialect identity ch =
   let s = output_string ch in
   let id = identity.id_ident in
-  (* cooperative-launch prelude *)
   s "  int _coop = 0;\n" ;
   s (Printf.sprintf "  (void)%s(&_coop, %s, 0);\n"
        dialect.gd_dev_attr dialect.gd_attr_coop) ;
@@ -90,7 +86,6 @@ let dump_gpu_stress_alloc dialect ch =
 
 let dump_cpu_stress_setup procs ch =
   let s = output_string ch in
-  (* The CPU stress population *)
   let n_cpu_threads = List.length procs.pr_cpus in
   s "  int _ncores = het_cpu_ncores();\n" ;
   s "  int _aff = HET_CPU_AFFINITY;\n" ;
@@ -124,7 +119,7 @@ let dump_noise_setup ch =
   uint32_t _noise_blocks = (uint32_t)_noiseBlocks;
   uint32_t _noise_words_per_round = (uint32_t)HET_NOISE_WORDS_PER_ROUND;
   uint32_t _noise_stride = (uint32_t)HET_NOISE_STRIDE;
-  uint64_t *_noise = NULL;   /* one system buffer, streamed by both halves */
+  uint64_t *_noise = NULL;
   het_cpu_noise_args _na[HET_CPU_NOISE_THREADS > 0 ? HET_CPU_NOISE_THREADS : 1];
   pthread_t _nth[HET_CPU_NOISE_THREADS > 0 ? HET_CPU_NOISE_THREADS : 1];
   int _cpu_noise_n = 0;
@@ -153,12 +148,9 @@ let dump_campaign_knobs ch =
   let s = output_string ch in
   s "  outs_t* hist = NULL;\n" ;
 
-  (* One counter per run
-     (hetlitmus/docs/environment-design.md "Aggregate"). *)
   s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
   s "  memset(_recs, 0, sizeof _recs);\n" ;
-  (* Campaign knobs read through getenv, never -D: a retune needs
-     no rebuild and no branch folds away.  See het_verdict.h. *)
+  (* getenv, never -D: nvcc would fold a compile-time value and delete the branch. *)
   s {|  int _runs_budget = (int)het_env_long("HET_RUNS_MAX", NUMBER_OF_RUN);
   if (_runs_budget > NUMBER_OF_RUN) {
     fprintf(stderr, "HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R with a fresh HET_SEED (hetlitmus/campaign.py).\n", _runs_budget, (int)NUMBER_OF_RUN);
@@ -168,9 +160,7 @@ let dump_campaign_knobs ch =
   int _stop_at_sighting = (int)het_env_long("HET_STOP_AT_SIGHTING", 0);
 |} ;
 
-  (* het_env_long returns its default for unset, empty and unparseable alike,
-     so the seed base reads getenv and parses it here: only a value strtol
-     consumes pins the base, anything else draws one. *)
+  (* Not het_env_long: an unparsable HET_SEED must draw a seed, not pin the default. *)
   s {|  const char *_seed_env = getenv("HET_SEED");
   const char *_seed_src = "env";
   char *_seed_end = NULL;
@@ -191,7 +181,6 @@ let dump_campaign_knobs ch =
   fprintf(stderr, "HetLitmus: seed0=%u source=%s -- HET_SEED=%u repeats this stress schedule.\n", _seed0, _seed_src, _seed0);
 |} ;
 
-  (* The rendezvous spin caps. *)
   s {|  long _cap_cpu_env = het_env_long("HET_CAP_CPU", (long)HET_CAP_CPU);
   long _cap_gpu_env = het_env_long("HET_CAP_GPU", (long)HET_CAP_GPU);
   if (_cap_cpu_env < 0) _cap_cpu_env = 0;
@@ -226,12 +215,10 @@ let dump_run_reset_race_surface memory ch =
 
 let dump_run_spawn_stress ch =
   let s = output_string ch in
-  (* The CPU stress population, spawned BEFORE the test threads. *)
   s "    memset(&_ct, 0, sizeof _ct);\n" ;
 
-  (* A host with no cache primitives issues zero preload hints. *)
   s {|    _ct.preload_inert = !het_cpu_preload_live();
-    het_cpu_shuffle(_cpu_idx, _cpu_nregions, _seed);   /* reshuffled per run */
+    het_cpu_shuffle(_cpu_idx, _cpu_nregions, _seed);
     __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);
     int _stress_core0 = HET_CPU_FIRST_CORE + _nCpuTest + HET_CPU_NOISE_THREADS;
     if (_aff && _stress_core0 + _nCpuStress > _ncores)
@@ -293,7 +280,6 @@ let dump_run_reset_observation dialect memory procs ch =
 
 let dump_run_spawn_cpu_threads procs memory ch =
   let s = output_string ch in
-  (* Cores go out in emission order, so no two test threads share one. *)
   let ti = ref 0 in
   List.iter
     (fun cp ->
@@ -320,7 +306,6 @@ let dump_run_spawn_cpu_threads procs memory ch =
 let dump_run_launch_kernel dialect identity memory procs ch =
   let s = output_string ch in
   let id = identity.id_ident in
-  (* args[] in kernel-parameter order. *)
   let args_addrs =
     String.concat ", "
       (List.map (fun g -> "&" ^ g) memory.me_gpu_globals
@@ -426,8 +411,8 @@ let dump_run_record_stamp identity ch =
     _rec.cap_calibrated = HET_CAP_CALIBRATED;
 |}
 
-(* Iteration n's vector comes from slot n, and the arrival flags are ANDed
-   first, so an iteration ONLY one side started is discarded unread. *)
+(* An iteration is scored only if every participant's rendezvous succeeded;
+   otherwise one side never ran it, so its result slots are not read. *)
 let dump_run_readout procs outcome ch =
   let s = output_string ch in
   let nslots = n_columns outcome in
@@ -467,12 +452,10 @@ let dump_run_readout procs outcome ch =
   s (Printf.sprintf
        "      hist = add_outcome_outs(hist, _o, %d, 1, _weak);\n" nslots) ;
 
-  (* outcomes_vary = 0 iff every scored iteration read the same vector. *)
   s {|      if (!_seen_first) { memcpy(_first, _o, sizeof _o); _seen_first = 1; }
       else if (memcmp(_first, _o, sizeof _o) != 0) _rec.outcomes_vary = 1;
     }
 |} ;
-  (* Marks the readout as having run. *)
   s "    _rec.rdv_valid = 1;\n"
 
 let dump_run_report ch =
@@ -492,8 +475,6 @@ let dump_run_report ch =
 
 let dump_run_early_stop ch =
   let s = output_string ch in
-  (* A clean sighting answers the row; a degenerate one (het_run_degenerate)
-     ends nothing, and with the knob unset every run executes. *)
   s {|    if (_stop_at_sighting && _rec.target_count > 0 && !het_run_degenerate(&_rec)) {
       printf("HetLitmus: run loop ended after run %d of %d on a clean sighting\n", _nrec, _runs_budget);
       break;
@@ -503,8 +484,6 @@ let dump_run_early_stop ch =
 let dump_aggregate identity outcome ch =
   let s = output_string ch in
   let tname = identity.id_name in
-  (* The aggregate reuses het_verdict() per record, so it inherits every
-     disqualifier (hetlitmus/docs/environment-design.md "Aggregate"). *)
   s {|  {
     het_stats_t _st;
     het_stats_compute(_recs, _nrec, &_st);

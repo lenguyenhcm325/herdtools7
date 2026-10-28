@@ -1,10 +1,9 @@
-Statistics-layer inputs: hetlitmus/docs/environment-design.md "Aggregate".
+Statistics-layer inputs.
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-sy.fsc.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-plain.fsc.litmus >/dev/null 2>&1
 
-The records outlive the run loop, and the post-pass scores the runs actually banked
-(_nrec) rather than the compiled constant.
+Statistics count only the runs that completed (_nrec).
 
   $ grep -c 'het_obs_record _recs\[NUMBER_OF_RUN\];' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
@@ -13,8 +12,7 @@ The records outlive the run loop, and the post-pass scores the runs actually ban
   $ grep -c 'het_stats_compute(_recs, _nrec, &_st);' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
-The campaign knobs are runtime reads (getenv), NEVER a -D, and the per-run seed
-derives from the seed base.
+The campaign knobs are getenv reads, never -D.
 
   $ grep -c 'het_env_long("HET_RUNS_MAX", NUMBER_OF_RUN)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
@@ -25,8 +23,7 @@ derives from the seed base.
   $ grep -c 'uint32_t _seed = _seed0 + (uint32_t)_run;' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
-An unset, empty or unparseable HET_SEED pins nothing, so the base is drawn from
-entropy, and the run prints the base it used either way.
+An unset or unparsable HET_SEED draws a base from entropy and prints it.
 
   $ grep -c '_seed_env = getenv("HET_SEED")' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
@@ -51,8 +48,7 @@ The target count is bumped once per scored iteration, under the detector itself.
   $ grep -c 'if (_weak) _rec.target_count++;' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
-The degeneracy guard reads evidence the emitter writes, and every shape writes it
--- the store-only ones included.
+Every shape writes the evidence the degeneracy guard reads.
 
   $ grep -c '_rec.outcomes_vary = 1;' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1

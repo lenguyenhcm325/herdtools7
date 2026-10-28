@@ -14,73 +14,46 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the GPU back-end dialect registry -- one record per vendor -- and
-   litmus7's `-gpu-target' option, which picks exactly one row.  The accepted
-   vocabulary is the registry's target column, so a vendor becomes accepted by
-   being registered.  Both GPU-emitting arms go through [select], so one
-   emission renders one vendor.  hetlitmus/docs/het-emission.md, "One render
-   per `-gpu-target`". *)
-
-(* One driver template is rendered per selected vendor, so per-target behaviour
-   is added as a field here, NEVER as a branch in the template. *)
 type gpu_dialect = {
-    gd_ext : string ;             (* output extension: "cu" | "hip" *)
-    gd_name : string ;            (* "CUDA" | "HIP" *)
-    (* Toolchain facts the emitted comp.sh / Makefile / README carry. *)
-    gd_target : string ;        (* comp.sh/make target word: "cuda" | "hip" *)
-    gd_vendor : string ;        (* "NVIDIA" | "AMD" *)
-    gd_toolchain : string ;     (* named when its compiler is absent *)
-    gd_compiler : string ;      (* "nvcc" | "hipcc" *)
-    gd_compiler_var : string ;  (* build variable holding it: "NVCC" | "HIPCC" *)
-    gd_arch_var : string ;      (* "CUDA_ARCH" | "HIP_ARCH" *)
-    gd_arch_default : string ;  (* "sm_90" | "gfx942" *)
-    gd_arch_flag : string ;     (* "-arch=" | "--offload-arch=" *)
-    gd_obj_suffix : string ;    (* GPU object stem suffix: "" | "_hip" *)
-    gd_readme_files : string ;  (* this render's entry in README's file list *)
-    gd_runtime_include : string ; (* the differing GPU atomics/runtime header *)
-    (* [~het] Some <C expression naming the iteration> selects the
-       slot-addressed compound path; None the standalone GPU-only path. *)
+    gd_ext : string ;
+    gd_name : string ;
+    gd_target : string ;
+    gd_vendor : string ;
+    gd_toolchain : string ;
+    gd_compiler : string ;
+    gd_compiler_var : string ;
+    gd_arch_var : string ;
+    gd_arch_default : string ;
+    gd_arch_flag : string ;
+    gd_obj_suffix : string ;
+    gd_readme_files : string ;
+    gd_runtime_include : string ;
     gd_dump_instr :
       out_channel -> het:string option -> string ->
       BellBase.instruction -> unit ;
     gd_fence_floor_guard : BellBase.instruction list -> string ;
-                                (* target-floor #error the fences demand, or "" *)
-    gd_device_sync : string ;     (* host-side device-sync statement *)
-    gd_free : string -> string ;  (* var -> free statement *)
-    (* The forward-progress poke the host half of the rendezvous calls while it
-       waits, on iteration 0 and after a failed iteration (het_rdv.h;
-       hetlitmus/docs/environment-design.md "Rendezvous").  The two fields
-       travel together -- an empty definition MUST pair with a NULL argument. *)
-    gd_poke_def : string ;        (* file-scope definition, or "" *)
-    gd_poke_arg : string ;        (* the expression, over `_n' and `a->_rdv' *)
-    (* Per-target allocator for the shared vars + the rendezvous counter
-       (hetlitmus/docs/environment-design.md "Allocation").  Call sites stay
-       dialect-agnostic C; __out is NOT routed through it. *)
-    gd_shared_mem_defs : string ;  (* file-scope gd_alloc_shared / gd_free_shared defs *)
-    (* The interconnect-stress allocator: one large system buffer both noise
-       halves stream-read.  A field because the targets differ in kind
-       (hetlitmus/docs/environment-design.md "Interconnect stress"). *)
-    gd_noise_mem_defs : string ;   (* file-scope gd_alloc_noise / gd_free_noise *)
-    (* Cooperative-launch tokens: co-residency and weak progress for the
-       persistent kernel ONLY.  The CPU<->GPU rendezvous is het_rdv.h's own
-       counter, so no grid.sync and no cooperative_groups.h. *)
-    gd_err_t : string ;         (* "cudaError_t"      | "hipError_t" *)
-    gd_success : string ;       (* "cudaSuccess"      | "hipSuccess" *)
-    gd_errstr : string ;        (* error-code -> message fn *)
-    gd_dev_attr : string ;      (* device-attribute query fn *)
-    gd_attr_coop : string ;     (* cooperative-launch support attribute enum *)
-    gd_attr_smcount : string ;  (* multiprocessor-count attribute enum *)
-    gd_occupancy : string ;     (* max-active-blocks-per-SM occupancy query fn *)
-    gd_coop_launch : string ;   (* cooperative kernel-launch fn *)
-    (* Read-buffer tokens.  The read buffers live in device memory, off the
-       coherent race path, and are mirrored host-side after the terminal sync. *)
-    gd_dev_malloc : string -> string -> string ;   (* var, bytes -> checked device alloc *)
-    gd_memcpy_d2h : string -> string -> string -> string ; (* dst, src, bytes *)
-    gd_dev_memset0 : string -> string -> string ;  (* ptr, bytes -> zero device mem *)
-    (* Host->device copy for the per-run stress scratch-location layout.  The
-       scratchpad is device memory, disjoint from every test location, so it
-       never goes through gd_alloc_shared. *)
-    gd_memcpy_h2d : string -> string -> string -> string ; (* dst, src, bytes *)
+    gd_device_sync : string ;
+    gd_free : string -> string ;
+    (* gd_poke_def and gd_poke_arg go together: an empty definition must pair
+       with a NULL argument. *)
+    gd_poke_def : string ;
+    gd_poke_arg : string ;
+    gd_shared_mem_defs : string ;
+    gd_noise_mem_defs : string ;
+    gd_err_t : string ;
+    gd_success : string ;
+    gd_errstr : string ;
+    gd_dev_attr : string ;
+    gd_attr_coop : string ;
+    gd_attr_smcount : string ;
+    gd_occupancy : string ;
+    gd_coop_launch : string ;
+    (* Read buffers live in device memory, off the coherent race path. *)
+    gd_dev_malloc : string -> string -> string ;
+    gd_memcpy_d2h : string -> string -> string -> string ;
+    gd_dev_memset0 : string -> string -> string ;
+    (* The scratchpad is device memory, never gd_alloc_shared. *)
+    gd_memcpy_h2d : string -> string -> string -> string ;
   }
 
 let cuda_dialect = {
@@ -90,12 +63,7 @@ let cuda_dialect = {
     gd_arch_var = "CUDA_ARCH" ; gd_arch_default = "sm_90" ;
     gd_arch_flag = "-arch=" ;
     gd_obj_suffix = "" ;
-    gd_readme_files =
-      "GPU kernel + host driver, CUDA dialect (gd_alloc_shared: system malloc\n\
-       \             where the GPU reaches pageable memory / cudaMallocManaged\n\
-       \             fallback for the shared vars + rendezvous counter,\n\
-       \             cuda::atomic_ref system-scope rendezvous, pthread + kernel\n\
-       \             launch).\n" ;
+    gd_readme_files = "GPU kernel + host driver, CUDA dialect.\n" ;
     gd_runtime_include = "#include <cuda/atomic>" ;
     gd_dump_instr = CudaLang.dump_instr ;
     gd_fence_floor_guard = CudaLang.fence_floor_guard ;
@@ -136,13 +104,10 @@ let hip_dialect = {
     gd_arch_var = "HIP_ARCH" ; gd_arch_default = "gfx942" ;
     gd_arch_flag = "--offload-arch=" ;
     gd_obj_suffix = "_hip" ;
-    gd_readme_files =
-      "same harness, HIP dialect (gd_alloc_shared: fine-grained\n\
-       \             hipMallocManaged, __hip_atomic_*).\n" ;
+    gd_readme_files = "GPU kernel + host driver, HIP dialect.\n" ;
     gd_runtime_include = "#include <hip/hip_runtime.h>" ;
     gd_dump_instr = HipLang.dump_instr ;
     gd_fence_floor_guard = (fun _ -> "") ;
-    (* no (void) cast: the driver binds this and checks its status *)
     gd_device_sync = "hipDeviceSynchronize();" ;
     gd_free = (fun v -> Printf.sprintf "(void)hipFree(%s);" v) ;
     gd_poke_def = "" ;
@@ -172,28 +137,18 @@ let hip_dialect = {
       (fun p bytes -> Printf.sprintf "(void)hipMemset(%s, 0, %s);" p bytes) ;
   }
 
-(* The registry: a vendor is added by adding an entry, and [select] picks the
-   ONE entry `-gpu-target' names. *)
 let dialects = [ cuda_dialect ; hip_dialect ]
 
-(* litmus7's option help reads the vocabulary here rather than repeating it. *)
 let target_doc = String.concat "|" (List.map (fun d -> d.gd_target) dialects)
 
-(* The GPU object and compile-line flags, given the arch reference as each
-   build file spells it ($CUDA_ARCH in sh, $(CUDA_ARCH) in make). *)
 let gpu_obj d tname = Printf.sprintf "%s%s.o" tname d.gd_obj_suffix
 let gpu_cflags d aref =
   Printf.sprintf "-std=c++17 %s%s" d.gd_arch_flag aref
 
-(* [set] records what `-gpu-target' asked for, [select] answers with the row. *)
 let requested : string option ref = ref None
 
 let set t = requested := Some t
 
-(* [key] names an entry's target word, generic because hetGpuOnly selects among
-   (dialect, banner, renderer) triples rather than bare rows.  Fails closed on
-   both a missing and an unknown target: the caller's ONLY deliverable is the
-   render, and the emission arms turn the error into HetArch.refused. *)
 let select ~key entries =
   let accepted = String.concat "|" (List.map key entries) in
   match !requested with

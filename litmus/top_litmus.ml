@@ -399,10 +399,6 @@ end = struct
 
   module SP = Splitter.Make(LexConfig)
 
-  (* HetLitmus: the seam for the het-only modules
-     (hetlitmus/docs/het-emission.md, "CPU ISA from the device tag").  HetOpts is the
-     slice of Top's scope the dispatch arms below close their functors over, so
-     none of those modules depends on this file. *)
   module HetOpts = struct
     let verbose = OT.verbose
     let nocatch = OT.nocatch
@@ -622,10 +618,6 @@ end = struct
              let module G = HetGpuOnly.Make(Cfg)(HetOpts)(Tar) in
              G.compile
           | `Het ->
-             (* HetArch.scan_cpu_isa names the CPU ISA before any parser
-                exists; this arm hand-builds the matching module chain and
-                drives HetEmit over it, the GPU side staying LISA/Bell.
-                hetlitmus/docs/het-emission.md. *)
              (fun compileonly hash_env name in_chan out_chan splitted ->
                try
                  let prog_text = HetArch.prog_section_text splitted name in
@@ -685,9 +677,8 @@ end = struct
                           end) in
                       H.run in
                  run compileonly hash_env name in_chan out_chan splitted
-               (* This arm is an emission boundary: refuse through
-                  HetArch.refused (hetlitmus/docs/het-emission.md,
-                  "Scope / limits"). *)
+               (* Refuse through HetArch.refused, so a failed emission never reports
+                  success. *)
                with e ->
                  if OT.nocatch then raise e ;
                  HetArch.refused "isa-scan" name e)

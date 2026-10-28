@@ -1,20 +1,11 @@
-/* Shared litmus vars + rendezvous barrier.  The allocator selects the property
-   under test -- whether both sides touch one physical line over the machine's
-   real coherence protocol -- so it is correctness, not tuning
-   (hetlitmus/docs/environment-design.md "Allocation").  HET_ALLOC (auto |
-   malloc | managed | pinned; unset = auto) picks the mode once per process;
-   each mode is system-scope atomic ONLY under a condition of
-   [CudaGuide "Atomicity"], so every guard below is fatal and none falls back.
-   The knob moves this object class only: the noise buffer and the device read
-   buffers allocate their own. */
+/* Each mode is system-scope atomic only under a condition of
+   [CudaGuide "Atomicity"], so every guard below is fatal and none falls back. */
 static int _shared_pageable(void){
   int _p = 0;
   (void)cudaDeviceGetAttribute(&_p, cudaDevAttrPageableMemoryAccess, 0);
   return _p;
 }
-/* Resolved once and cached: the free must use the allocator that ran, and a
-   re-query could answer differently (a forced mode, a second device).  The
-   first gd_alloc_shared runs in main before any thread, so no lock. */
+
 #define HET_ALLOC_MALLOC  0
 #define HET_ALLOC_MANAGED 1
 #define HET_ALLOC_PINNED  2
@@ -89,9 +80,9 @@ static int _het_alloc_mode(void){
 }
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   int _m = _het_alloc_mode();
-  *_pp = NULL;   /* never read the caller's uninitialised pointer */
+  *_pp = NULL;
   if (_m == HET_ALLOC_MALLOC) {
-    *_pp = malloc(_bytes);   /* GH200: ATS, in-place cache-line CHI coherence */
+    *_pp = malloc(_bytes);
     if (*_pp == NULL) {
       fprintf(stderr,
               "HetLitmus FATAL: malloc of %llu bytes for the shared vars failed.\n",
@@ -99,7 +90,7 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
       exit(2);
     }
   } else if (_m == HET_ALLOC_MANAGED) {
-    cudaError_t _e = cudaMallocManaged(_pp, _bytes);   /* machinery fallback only */
+    cudaError_t _e = cudaMallocManaged(_pp, _bytes);
     if (_e != cudaSuccess || *_pp == NULL) {
       fprintf(stderr,
               "HetLitmus FATAL: cudaMallocManaged of %llu bytes for the shared vars "
@@ -108,9 +99,8 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
       exit(2);
     }
   } else {
-    /* Mapped page-locked host memory: the kernel uses the host pointer itself
-       [CudaGuide "cudaMallocHost and cudaHostAlloc"]; portable, so the mapping
-       survives a second context; freed with cudaFreeHost, NEVER free(). */
+    /* [CudaGuide "cudaMallocHost and cudaHostAlloc"]; free with cudaFreeHost,
+       never free(). */
     cudaError_t _e = cudaHostAlloc(_pp, _bytes,
                                    cudaHostAllocMapped | cudaHostAllocPortable);
     if (_e != cudaSuccess || *_pp == NULL) {
@@ -123,13 +113,11 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
   }
 }
 static void gd_free_shared(void* _p){
-  int _m = _het_alloc_mode();   /* the cached mode, never a re-query */
+  int _m = _het_alloc_mode();
   if (_m == HET_ALLOC_MALLOC) { free(_p); }
   else if (_m == HET_ALLOC_MANAGED) { cudaFree(_p); }
   else { cudaFreeHost(_p); }
 }
-/* The harness's own device memory (read buffers, scratchpad, tally): a NULL
-   would reach the launch, so a refused allocation ends the run. */
 static void gd_alloc_dev(void** _pp, size_t _bytes, const char* _what){
   *_pp = NULL;
   cudaError_t _e = cudaMalloc(_pp, _bytes);

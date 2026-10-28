@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-"""The CPU-side and interconnect stress layer of one het harness, which
-reaches no PTX (hetlitmus/docs/faithfulness.md "CPU-side stress liveness"):
-  preload-prims  litmus7's three cache primitives are in the -O2 AArch64 asm
-  stress-loop    het_cpu_stress's -O2 body keeps its discarded loads and stores
-  stress-live    a native probe against the emitted het_cpu_stress.h counts
-                 stress rounds and accesses, preload hints and noise rounds
-A miss means a null was scored on a layer the optimiser removed or that never
-ran.  Exit 0 PASS, 1 FAIL, 2 error.
+"""The CPU-side and interconnect stress layer of one het harness survives -O2 and runs.
+Exit 0 PASS, 1 FAIL, 2 error.
 """
 
 import argparse
@@ -20,22 +14,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ptxcheck as ptx
 
-# The _cpu.c of the AArch64 tree, read through clang --target; the preload is
-# litmus7's own primitives (libdir/_aarch64/_cache.h).
 TRIPLE = "aarch64-linux-gnu"
 PRIMS = (("dc civac", r"\bdc\s+civac\b"), ("prfm pldl1keep", r"\bprfm\s+pldl1keep\b"),
          ("prfm pstl1keep", r"\bprfm\s+pstl1keep\b"))
 STRESS_BODY = re.compile(r"^het_cpu_stress:.*?\n(.*?)^\s*\.size\s+het_cpu_stress",
                          re.S | re.M)
-# `(void)*l' lowers to a zero-register load; the sigma arms declare 2+1+1+0
-# stores, and a non-volatile build lands under both.
 DISCARD_LOAD = re.compile(r"^\s+ldr\s+[xw]zr\s*,", re.M)
 STORE = re.compile(r"^\s+str\b", re.M)
 MIN_STORES = 4
 LIVE = ("stress_rounds", "stress_accesses", "preload_ops", "noise_rounds")
 
-# Built native against the harness's own header, which may not include
-# <pthread.h>; the flag is up before the spawn, as the emitted driver has it.
 PROBE_C = r"""
 #define _GNU_SOURCE
 #include <pthread.h>
@@ -96,7 +84,6 @@ int main(void) {
 
 
 def asm_of(cpu_c):
-    """The -O2 AArch64 assembly of <test>_cpu.c: what survived the optimiser."""
     r = ptx.run(["clang", "--target=" + TRIPLE, "-std=gnu11", "-O2", "-S",
                  "-o", "-", cpu_c])
     if r.returncode != 0:
@@ -105,7 +92,6 @@ def asm_of(cpu_c):
 
 
 def probe(d):
-    """{counter: value} of one 50 ms run of the layer, on this host."""
     src, exe = os.path.join(d, "_probe.c"), os.path.join(d, "_probe")
     with open(src, "w") as fh:
         fh.write(PROBE_C)
@@ -118,7 +104,6 @@ def probe(d):
 
 
 def check(litmus_path):
-    """The FAIL lines of one test."""
     bad = []
     tmp = tempfile.mkdtemp(prefix="cpustresscheck_")
     try:

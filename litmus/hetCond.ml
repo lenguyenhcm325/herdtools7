@@ -14,11 +14,6 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the condition's location set and its compilation to a C
-   predicate; contract in hetCond.mli. *)
-
-(* fold_prop folds right over And/Or children, so prepending yields source
-   order; the de-dup afterwards keeps each name's first occurrence. *)
 let condition_locations p =
   let add atom acc =
     match atom with
@@ -35,14 +30,12 @@ let condition_locations p =
       if Hashtbl.mem seen k then false else (Hashtbl.add seen k () ; true))
     locs
 
-(* A value as C spells it, and as an int when it is one. *)
 let cval v = ParsedConstant.pp_v v
 let cint v = int_of_string_opt (ParsedConstant.pp_v v)
 
-(* Folding every connective over constant parts keeps the emitted predicate
-   readable, and is what lets a whole condition collapse to "0" or "1".  The
-   emitter refuses a constant predicate (hetEmit.ml) by reading that collapse,
-   so a connective that does NOT fold hides a constant detector from it. *)
+(* Each of and/or/not/implies must simplify constant parts to "0" or "1":
+   the emitter refuses a condition that is constant by checking for exactly
+   that result. *)
 let is_true s =
   s = "1" || (String.length s >= 2 && s.[0]='1' && s.[1]=' ')
 let is_false s =

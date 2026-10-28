@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""het_verdict.h, the real emitted header, compiled with synthetic records:
-  1 the rule       het_verdict(): each case's outcome and dq/cv words EXACTLY;
-                   every outcome and every flag the header declares is reached
-  2 the printout   each sentence prints from exactly the cases that own it, and
-                   the frame names the pair the emitter stamped
-  3 the aggregate  het_stats_compute() per record stream, a Never's effort
-                   clause, and the HetStats keys campaign.py reads
-A miss means the rule stopped deciding, or a sentence reports what nothing
-measured (hetlitmus/docs/environment-design.md "Reporting", "Aggregate").
-"""
+"""het_verdict() and het_stats_compute() on synthetic records."""
 
 import os
 import re
@@ -24,19 +15,16 @@ import ptxcheck as ptx
 
 CAMPAIGN = os.path.join(ptx.REPO, "hetlitmus", "campaign.py")
 VERDICTS = ("OBSERVED", "NOT-OBSERVED", "COLD-INVALID")
-# Every flag the header declares, whatever its bit expression: the compiled
-# driver prints each one's value.
 FLAG_RE = re.compile(r"^#define (HET_(?:DQ|CV)_\w+)", re.M)
 PAIR_RE = re.compile(r'^#define HET_PAIR_NAME "(.*)"$', re.M)
 
-# A live, stressed, reportable null; every case perturbs a few fields of it.
 BASE = dict(
     N=100000, iters_scored=100000, iters_discarded=0, target_count=0,
     outcomes_vary=1, rdv_valid=1, rdv_cap_cpu=0, rdv_cap_gpu=0,
     cap_cpu=262144, cap_gpu=4096, cap_calibrated=1, stress_truncated=0,
     gpu_stress_rounds=64, cpu_stress_rounds=1000, cpu_preload_ops=1000,
     cpu_noise_rounds=1000, gpu_noise_blocks=8, cpu_aff_failures=0,
-    stress_requested=0x3D,          # every HET_REQ_* mechanism
+    stress_requested=0x3D,
 )
 DEAD = dict(gpu_stress_rounds=0, cpu_stress_rounds=0, cpu_preload_ops=0,
             cpu_noise_rounds=0, gpu_noise_blocks=0)
@@ -50,7 +38,6 @@ def case(name, verdict, dq=(), cv=(), **kw):
 CASES = [
     case("live-null", "NOT-OBSERVED"),
     case("observed", "OBSERVED", target_count=1),
-    # A sighting is believed under every disqualifier, and carries every caveat.
     case("observed-beats-every-disqualifier", "OBSERVED", target_count=1,
          stress_truncated=99, rdv_valid=0, **DEAD),
     case("observed-with-every-caveat", "OBSERVED",
@@ -61,10 +48,8 @@ CASES = [
     case("uncalibrated-caps", "NOT-OBSERVED", cv=["RDV_UNCALIBRATED"],
          cap_calibrated=0),
     case("pin-refused", "NOT-OBSERVED", cv=["AFF_FAILED"], cpu_aff_failures=3),
-    # Not requested is not dead, or every no-stress baseline is COLD.
     case("unstressed-baseline", "NOT-OBSERVED", cv=["UNSTRESSED"],
          stress_requested=0, **DEAD),
-    # Memset residue fails closed.
     case("zeroed-record", "COLD-INVALID", dq=["RDV_DEAD"],
          cv=["RDV_UNCALIBRATED", "UNSTRESSED"], **{k: 0 for k in BASE}),
     case("cold-stress-truncated", "COLD-INVALID", dq=["STRESS_TRUNCATED"],
@@ -79,8 +64,6 @@ CASES = [
          cpu_noise_rounds=0),
     case("cold-gpu-noise-dead", "COLD-INVALID", dq=["GPU_NOISE_DEAD"],
          gpu_noise_blocks=0),
-    # The rendezvous disjuncts: the budget, nothing scored (which raises no
-    # one-outcome caveat), a readout that never ran; the budget is a threshold.
     case("rdv-dead-by-rate", "COLD-INVALID", dq=["RDV_DEAD"],
          iters_scored=40000, iters_discarded=60000,
          rdv_cap_cpu=60000, rdv_cap_gpu=1),
@@ -91,8 +74,6 @@ CASES = [
          iters_scored=50000, iters_discarded=50000, rdv_cap_gpu=50000),
 ]
 
-# (owner, sentence): the cases of those outcomes, or the cases whose expected
-# flag word carries that bit, print the sentence and no other case does.
 SENTENCES = [
     ("OBSERVED", "the weak outcome was OBSERVED on {pair}"),
     ("NOT-OBSERVED,COLD-INVALID", "the weak outcome was NOT observed"),
@@ -120,8 +101,6 @@ def owns(owner, c):
     return flag in c[key] if flag else c["verdict"] in owner.split(",")
 
 
-# The aggregate's record streams, one record per run, each with its statistics
-# written out as (obs, k, k_eff, n_degen, R, R_usable, scored, discarded).
 RUNS = 10
 N = BASE["N"]
 STREAM_FIELDS = ("obs", "k", "k_eff", "n_degen", "R", "R_usable", "scored",
@@ -133,7 +112,6 @@ def stream(n=RUNS, **kw):
 
 
 def observed(recs, k, clean=True):
-    """The first k runs see the target; not clean: in a constant readout."""
     for r in recs[:k]:
         r["target_count"] = 1
         if not clean:
@@ -142,7 +120,6 @@ def observed(recs, k, clean=True):
 
 
 def cold(recs, start=0):
-    """Runs from `start' on are COLD: their stress stopped mid-run."""
     for r in recs[start:]:
         r["stress_truncated"] = 1
     return recs
@@ -160,10 +137,8 @@ STREAMS = [
      ("Sometimes", 3, 3, 0, RUNS, RUNS, RUNS * N, 0)),
     ("always", observed(stream(), RUNS),
      ("Always", RUNS, RUNS, 0, RUNS, RUNS, RUNS * N, 0)),
-    # Not one usable run is no reading at all, which is NOT a Never.
     ("void-when-every-run-is-cold", cold(stream()),
      ("VOID", 0, 0, 0, RUNS, 0, RUNS * N, 0)),
-    # The decode guard's three disjuncts: reported in k, counted nowhere in k_eff.
     ("degenerate-sightings-reported-not-counted",
      observed(stream(), 3, clean=False),
      ("Sometimes", 3, 0, 3, RUNS, RUNS, RUNS * N, 0)),
@@ -171,7 +146,6 @@ STREAMS = [
      ("Sometimes", 1, 0, 1, RUNS, RUNS, RUNS * N, 0)),
     ("sighting-from-a-run-that-scored-nothing", _none_scored,
      ("Sometimes", 1, 0, 1, RUNS, RUNS, (RUNS - 1) * N, 0)),
-    # The runs that fired are usable BECAUSE they fired; the denominator is R.
     ("fired-3-of-10-cold-is-sometimes", observed(cold(stream()), 3),
      ("Sometimes", 3, 3, 0, RUNS, 3, RUNS * N, 0)),
     ("never-over-three-live-runs-of-ten", cold(stream(), 3),
@@ -181,8 +155,6 @@ STREAMS = [
      ("Never", 0, 0, 0, RUNS, RUNS, RUNS * 60000, RUNS * 40000)),
 ]
 
-# The HetStats line is campaign.py's whole interface: a key it reads that the
-# line never prints reads back 0.
 CONSUMER_KEY_RE = re.compile(r'\bfnum\(\s*kv\s*,\s*"(\w+)"')
 LINE_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
 STATS_LINE = re.compile(r"HetStats \S+ obs=\S+ ")
@@ -243,7 +215,6 @@ def build_c(pair, flags):
 
 
 def compile_and_run(d, pair, flags):
-    """The driver's stdout, compiled in the harness dir against its header."""
     src, exe = os.path.join(d, "vt.c"), os.path.join(d, "vt")
     with open(src, "w") as fh:
         fh.write(build_c(pair, flags))
@@ -255,8 +226,6 @@ def compile_and_run(d, pair, flags):
 
 
 def parse(text):
-    """({flag: value}, {case: (want, got, dq, cv, ok)}, {stream: statistics},
-    {case or stream: printout}) off the driver's stdout."""
     flags, cases, streams, prints, cur = {}, {}, {}, {}, None
     for l in text.splitlines():
         f = l.split("|")
@@ -276,7 +245,6 @@ def parse(text):
 
 
 def check_rule(cases, flags):
-    """PHASE 1: the per-case words, and every outcome and flag reached."""
     bad = ["%s produced no CASE line" % c["name"]
            for c in CASES if c["name"] not in cases]
     bad += ["%s: want %s, got %s dq=0x%x cv=0x%x" % (n, want, got, dq, cv)
@@ -297,7 +265,6 @@ def check_rule(cases, flags):
 
 
 def check_prints(prints, pair):
-    """PHASE 2: each sentence from exactly the cases that own it."""
     bad = []
     for owner, text in SENTENCES:
         text = text.replace("{pair}", pair)
@@ -313,8 +280,6 @@ def check_prints(prints, pair):
 
 
 def check_aggregate(streams, prints):
-    """PHASE 3: the statistics as written out, a Never's effort clause, and
-    the keys campaign.py reads."""
     bad = []
     for name, _recs, want in STREAMS:
         if name not in streams:

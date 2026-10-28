@@ -203,7 +203,7 @@ let get_default arch = match arch with
 | `MIPS|`RISCV -> mipsopt
 | `C -> copt
 | `LISA -> copt (* HetLitmus: a LISA test emits GPU source, so no ASM opts *)
-| `Het -> copt (* HetLitmus: a het harness is built by its own makefile *)
+| `Het -> copt
 | `BPF
 | `CPP
 | `GPU_PTX

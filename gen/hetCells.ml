@@ -14,15 +14,8 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: a single-arch test as device-neutral string fragments.  Strings,
-   not arch-typed values, are the erasure boundary that lets two different `A`
-   modules be merged into one `Het` test by gen/hetGen.ml.
-   Design: hetlitmus/docs/het-litmus-format.md "String erasure". *)
 type t = {
-  (* Init atoms with their owning proc; None = global.  No trailing ';'. *)
   hc_init : (int option * string) list ;
-  (* Per proc: instruction-cell strings in that arch's syntax. *)
   hc_cols : (int * string list) list ;
-  (* The whole final condition, e.g. exists (1:r0=1 /\ 1:r1=0). *)
   hc_cond : string ;
 }

@@ -1,14 +1,10 @@
-Shared-memory allocation guard (hetlitmus/docs/environment-design.md
-"Allocation").
+Shared-memory allocation guard.
 
-One MP shape per dialect; the `.hip' comes from ../het-x86_64 because a HIP
-harness is the (x86_64, hip) pair.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-plain.rlx.litmus >/dev/null 2>&1
   $ mkdir hip
   $ litmus7 -gpu-target hip -o hip ../het-x86_64/MP-cg-sys-plain.rlx-x86_64.litmus >/dev/null 2>&1
 
-(a) the shared vars (x, y) and the barrier route through gd_alloc_shared (3 call
-sites), and each is freed by the allocator-aware gd_free_shared (3 frees).
+(a) the shared vars and the barrier go through gd_alloc_shared and gd_free_shared.
   $ grep -c 'gd_alloc_shared((void\*\*)&' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   3
   $ grep -cE 'gd_free_shared\((x|y|barrier)\)' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
@@ -20,8 +16,7 @@ sites), and each is freed by the allocator-aware gd_free_shared (3 frees).
   $ grep -c 'static void gd_free_shared' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-(c) CUDA dispatch: the pageable query picks malloc or the managed fallback and
-each allocator has its matching free, every grep SCOPED to one function body.
+(c) CUDA: the pageable query picks malloc or managed, each with its matching free.
   $ sed -n '/^static int _shared_pageable/,/^}/p' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu | grep -c 'cudaDevAttrPageableMemoryAccess,'
   1
   $ ALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu)
@@ -43,22 +38,19 @@ each allocator has its matching free, every grep SCOPED to one function body.
   $ printf '%s\n' "$FREE" | grep -c 'cudaDeviceGetAttribute' || true
   0
 
-(d) __out is gone; the read buffers are device memory, never gd_alloc_shared,
-and a shared var is one int slot per iteration (slot-readout.t).
+(d) the read buffers are device memory, never gd_alloc_shared.
   $ grep -c '__out' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu || true
   0
   $ grep -c 'gd_alloc_dev((void\*\*)&bufP' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   2
 
-(d2) every device allocation is checked: the one bare cudaMalloc is gd_alloc_dev's
-own, and the HIP twin's one bare hipMalloc likewise.
+(d2) every device allocation is checked.
   $ grep -c 'cudaMalloc(' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
   $ grep -c 'hipMalloc(' hip/MP-cg-sys-plain.rlx-x86_64/MP-cg-sys-plain.rlx-x86_64.hip
   1
 
-The HIP twin renders from the same template: fine-grained hipMallocManaged, no
-CUDA-side allocator leaking across the dialects, device gd_alloc_dev, no __out.
+The HIP twin: fine-grained hipMallocManaged, nothing CUDA-side.
   $ sed -n '/^static void gd_alloc_shared/,/^}/p' hip/MP-cg-sys-plain.rlx-x86_64/MP-cg-sys-plain.rlx-x86_64.hip | grep -c 'hipMallocManaged(_pp'
   1
   $ grep -cE '_shared_pageable|\*_pp = malloc|hipHostMalloc|HET_ALLOC_PINNED' hip/MP-cg-sys-plain.rlx-x86_64/MP-cg-sys-plain.rlx-x86_64.hip || true
@@ -70,8 +62,7 @@ CUDA-side allocator leaking across the dialects, device gd_alloc_dev, no __out.
   $ grep -c 'gd_alloc_dev((void\*\*)&bufP' hip/MP-cg-sys-plain.rlx-x86_64/MP-cg-sys-plain.rlx-x86_64.hip
   2
 
-(e) HET_ALLOC on the CUDA render: the knob is read, unset is (c)'s dispatch, and
-each of the three preconditions is exit(2) rather than a warning.
+(e) HET_ALLOC: each failed precondition is exit(2), not a warning.
   $ REL=MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx
   $ grep -c 'getenv("HET_ALLOC")' $REL.cu
   1
@@ -87,8 +78,7 @@ each of the three preconditions is exit(2) rather than a warning.
   $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrHostNativeAtomicSupported'
   2
 
-(e2) the mode is resolved once and cached, which is what makes (c)'s free rule
-sound, and the pinned mode says what it cannot promise.
+(e2) the mode is resolved once and cached.
   $ printf '%s\n' "$MODE" | grep -c 'static int _mode = -1;'
   1
   $ printf '%s\n' "$MODE" | grep -c 'if (_mode >= 0) return _mode;'
@@ -96,8 +86,7 @@ sound, and the pinned mode says what it cannot promise.
   $ printf '%s\n' "$MODE" | grep -c 'a single lost increment leaves it one short of EVERY'
   1
 
-(e3) the banner carries the ATS-vs-HMM discriminator, queried as well as printed,
-so a render that kept the text and lost the query is not read as the same box.
+(e3) the banner carries the ATS-vs-HMM attribute, queried as well as printed.
   $ printf '%s\n' "$MODE" | grep -c 'HetLitmus: shared-mem mode=%s (HET_ALLOC=%s'
   1
   $ printf '%s\n' "$MODE" | grep -c 'usesHostPageTables=%d concurrentManagedAccess=%d)'
@@ -105,8 +94,7 @@ so a render that kept the text and lost the query is not read as the same box.
   $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrPageableMemoryAccessUsesHostPageTables'
   1
 
-(f) every branch of the CUDA gd_alloc_shared checks its allocation: the pointer
-starts NULL and each of the three failures is a sized FATAL and an exit(2).
+(f) every branch of the CUDA gd_alloc_shared checks its allocation.
   $ printf '%s\n' "$ALLOC" | grep -c '\*_pp = NULL;'
   1
   $ printf '%s\n' "$ALLOC" | grep -c 'HetLitmus FATAL:'
@@ -114,8 +102,7 @@ starts NULL and each of the three failures is a sized FATAL and an exit(2).
   $ printf '%s\n' "$ALLOC" | grep -c 'exit(2);'
   3
 
-(g) the HIP harness calls it: gd_alloc_shared resolves the mode BEFORE the
-allocation it then checks, and the free stays keyed on the resolver.
+(g) the HIP harness resolves the mode before the allocation it checks.
   $ HREL=hip/MP-cg-sys-plain.rlx-x86_64/MP-cg-sys-plain.rlx-x86_64.hip
   $ HALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' $HREL)
   $ printf '%s\n' "$HALLOC" | grep -c '_het_alloc_mode()'

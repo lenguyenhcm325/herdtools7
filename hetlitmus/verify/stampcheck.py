@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the emitter/runtime skew tripwire.  Usage: stampcheck.py [-q]
-
-Nothing but a compiler binds the `#define HET_*' stamps (litmus/hetGpuFile.ml)
-to litmus/het-runtime/*.h, and a stamp nobody reads still compiles.  Over one
-real emission per (CPU ISA, GPU dialect) pair, every stamped `#define HET_*'
-is read by a header or the render.
+"""Every stamped #define HET_* is read by a header or the render.
+Usage: stampcheck.py [-q]
 """
 
 import argparse
@@ -24,8 +20,6 @@ HET_DIR = census.HET_DIR
 X86_DIR = census.X86_DIR
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
-# (corpus dir, test, -gpu-target, render extension), one per pair: the names a
-# render stamps and uses do not vary with the test's shape.
 LANES = [
     (HET_DIR, "MP-cg-sys-sy.fsc", "cuda", "cu"),
     (X86_DIR, "MP-cg-sys-plain.rlx-x86_64", "hip", "hip"),
@@ -35,8 +29,6 @@ HEADERS = ["het_verdict.h", "het_stress.h", "het_cpu_stress.h", "het_rdv.h"]
 DEFINE_RE = re.compile(r"^#define (HET_[A-Za-z0-9_]+)", re.M)
 
 def code_only(text):
-    """Drop comments and string literals, so a surviving identifier is one the
-    compiler sees -- het_verdict.h names many knobs in prose and printf text."""
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
     text = re.sub(r"//[^\n]*", " ", text)
     return re.sub(r'"(?:\\.|[^"\\])*"', ' "" ', text)
@@ -74,8 +66,6 @@ def check_lane(d, test, ext, quiet):
     code = code_only(src)
 
     stamped = sorted(set(DEFINE_RE.findall(src)))
-    # A define the render itself uses is read even if no header names it; its
-    # #define/#ifndef/#undef lines are not uses.
     for name in stamped:
         readers = [h for h in HEADERS
                    if re.search(r"\b%s\b" % re.escape(name), heads[h])]
@@ -106,7 +96,7 @@ def run(quiet):
     if bad:
         print("\nSTAMPCHECK FAILED: %d problem(s)." % len(bad))
         return 1
-    print("\nSTAMPCHECK OK (%d lane(s): every stamp read)" % len(LANES))
+    print("\nSTAMPCHECK OK (%d lanes)" % len(LANES))
     return 0
 
 

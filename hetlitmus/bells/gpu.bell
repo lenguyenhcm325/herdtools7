@@ -1,13 +1,5 @@
 "Scoped GPU Bell annotations (HetLitmus)"
 
-(*
- * Bell annotation vocabulary for scoped GPU litmus tests: diy7 generates
- * scoped LISA tests over it, herd7 reads them back via -bell.  Every access
- * carries BOTH a memory order and a scope.
- * Provenance, and the corpus the vocabulary is scoped to:
- * hetlitmus/docs/corpus-grid.md, "The vocabulary the frontend must express".
- *)
-
 enum memory_order = 'relaxed || 'acquire || 'release || 'acqrel || 'sc
 
 (* Scope names follow PTX; the hierarchy is cta < gpu < sys. *)
@@ -26,7 +18,3 @@ end
 instructions R[{'relaxed,'acquire,'sc}, scopes]
 instructions W[{'relaxed,'release,'sc}, scopes]
 instructions F[{'acquire,'release,'acqrel,'sc}, scopes]
-
-(* Vocabulary only, no convenience sets: a model retrieves one event set per
-   tag with `tag2events`.  `tag2set` is interpreter-internal and is NOT bound
-   in Bell or cat scope. *)

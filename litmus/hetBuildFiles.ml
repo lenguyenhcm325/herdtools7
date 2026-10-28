@@ -14,10 +14,6 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the harness directory's build files -- comp.sh, the Makefile and
-   the README -- rendered from one harness record.
-   Design: hetlitmus/docs/het-emission.md. *)
-
 open HetCpuFront
 
 open HetDialect
@@ -34,15 +30,8 @@ let dump_comp h ch =
   s (Printf.sprintf
        "# Compile-only check for HetLitmus harness '%s' (%s render).\n"
        tname d.gd_name) ;
-  s (Printf.sprintf
-       "# COMPILE-ONLY by default (-c, no link, no GPU run); `%s-link' links ./%s too.\n"
-       target tname) ;
   s (Printf.sprintf "# Usage: sh comp.sh [%s|%s-link]   (default %s)\n"
        target target target) ;
-  s (Printf.sprintf
-       "# Why every render writes ./%s, and the build\n"
-       tname) ;
-  s "# knobs: hetlitmus/docs/het-emission.md\n" ;
   s "set -e\n" ;
   s (Printf.sprintf "TARGET=\"${1:-%s}\"\n" target) ;
   s (Printf.sprintf "%s=\"${%s:-%s}\" ; %s=\"${%s:-%s}\" # default arch %s\n"
@@ -53,8 +42,7 @@ let dump_comp h ch =
   s {|echo "+ gcc -c outs.c"
 gcc -c outs.c -o outs.o
 |} ;
-  (* ONLY the native branch writes the object a link path names
-     (hetlitmus/docs/het-emission.md, "The CPU object"). *)
+  (* ONLY the native branch writes the object a link path names. *)
   let triple,std = tc.cross in
   s (Printf.sprintf "if [ \"$(uname -m)\" = \"%s\" ]; then\n" host_uname) ;
   s (Printf.sprintf
@@ -183,9 +171,6 @@ let dump_readme h ch =
        "an `#error` -- so elsewhere `comp.sh` cross-assembles it with\n\
         `clang --target=%s` and no link path can write `./%s`.\n\n"
        (fst tc.cross) tname) ;
-  s (Printf.sprintf
-       "The build knobs and why `make %s` refuses:\n" tname) ;
-  s "`hetlitmus/docs/het-emission.md`.\n\n" ;
   s (Printf.sprintf "Target: %s %s.\n" d.gd_vendor d.gd_name) ;
   s (Printf.sprintf
        "Pair: `%s` -- the CPU ISA and GPU dialect this harness was built\n"

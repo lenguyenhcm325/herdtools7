@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""faithful-cover.txt covers the corpus: every feature of both CUDA-lane
-corpora appears in some test the list names, each entry <tree>/<name>.litmus
-relative to census.CORPUS.  A feature is the test kind, the device pattern, a
-`+' in the name, or one column's whole op program (ptxcheck's parse), so a
-listed test stands in for every test sharing them.  A miss names the
-uncovered feature: a shape `tokens.sh all' would never compile
-(hetlitmus/docs/faithfulness.md).
+"""faithful-cover.txt covers every feature of both CUDA-lane corpora.
 Exit 0 = covered, 1 = uncovered, 2 = error.  --extend adds tests to the list.
 """
 
@@ -23,14 +17,12 @@ COVER_REL = os.path.relpath(COVER, os.path.join(HERE, "..", ".."))
 
 
 def corpus():
-    """Both corpora at their pinned census, relative to census.CORPUS."""
     files = census.corpus_files(census.GPU_DIR, "gpu-only", census.GPU_ONLY) + \
         census.corpus_files(census.HET_DIR, "het", census.HET)
     return [os.path.relpath(f, census.CORPUS) for f in files]
 
 
 def features(rel):
-    """The set a listed test stands in for (module docstring)."""
     inst = ptx.instance_of(os.path.join(census.CORPUS, rel))
     f = {("kind", inst['kind']), ("pattern", inst['pattern']),
          ("name_plus", '+' in os.path.basename(rel))}
@@ -49,8 +41,6 @@ def union(feats, tests):
 
 
 def extend(feats, tests, cover):
-    """Greedily add tests until the list covers the corpus, dropping none of
-    the listed ones.  census.COVER is then a hand-edit."""
     chosen, left = list(cover), union(feats, tests) - union(feats, cover)
     while left:
         best = max(tests, key=lambda t: (len(feats[t] & left), t))
@@ -93,8 +83,7 @@ def main():
             print("  %s" % (m,))
         print("  extend the list with: python3 hetlitmus/verify/covercheck.py --extend")
         return 1
-    print("COVER OK: %d tests cover all %d features of the %d-test corpus"
-          % (len(cover), len(union(feats, tests)), len(tests)))
+    print("COVER OK (%d tests, %d features)" % (len(cover), len(union(feats, tests))))
     return 0
 
 

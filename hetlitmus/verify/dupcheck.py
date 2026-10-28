@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""dupcheck.py -- the isomorphism gate over the built het tree (census.HET_DIR).
-
-  duplicate  no two tests are the same experiment up to (proc permutation x
-             location renaming): the cut reduction by the cycle's symmetry
-             kept no two isomorphic tests, the class the generator's byte-dedup
-             cannot see (hetlitmus/docs/corpus-grid.md).
-  empty      an empty --dir is a refusal, not a clean corpus.
+"""No two tests of the het tree are the same experiment with threads or locations renamed.
 
 Usage:  dupcheck.py [--dir D] [-q]   (exit 0 = clean)
 """
@@ -25,17 +19,14 @@ import census
 DEFAULT_DIR = census.HET_DIR
 
 
-# Canonical form: procs (with their device tag) x ordered annotated events,
-# minimised over permutation of procs x renaming of locations.
-
 def _rk(r):
-    """W0 and X0 are the same AArch64 register -- key by the number."""
+    """W0 and X0 are the same AArch64 register: key by the number."""
     m = re.match(r"[WXwx](\d+)$", r)
     return m.group(1) if m else r
 
 
 def parse(path):
-    L = open(path).read().splitlines()[2:]        # skip `Het <name>' + comment
+    L = open(path).read().splitlines()[2:]
     i, j = L.index("{"), L.index("}")
     init = [l.strip().rstrip(";") for l in L[i + 1:j] if l.strip()]
     rest = L[j + 1:]
@@ -49,7 +40,6 @@ def parse(path):
 
 
 def events(path):
-    """-> ([(device, [(kind, loc, value, annotation), ...]), ...], cond atoms)"""
     init, cols, cond = parse(path)
     regvar = {}
     for a in init:
@@ -160,9 +150,7 @@ def check(d, quiet=False):
         print("\nDUPCHECK FAILED: %d problem(s)." % len(errors))
         return 1
     if not quiet:
-        print("DUPCHECK OK  (%d file(s), %d distinct experiment(s), %d duplicate "
-              "class(es))"
-              % (n_files, len(groups), len(found)))
+        print("DUPCHECK OK (%d files, %d distinct)" % (n_files, len(groups)))
     return 0
 
 

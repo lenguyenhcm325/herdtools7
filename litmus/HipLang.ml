@@ -14,15 +14,10 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: emit an AMD HIP C++ (.hip) litmus kernel from a parsed LISA/Bell
-   scoped test -- the lowering into __hip_atomic_load/store and
-   __builtin_amdgcn_fence, plus the emitted HIP tokens; gpuLang holds
-   everything shared with CudaLang.  Design: hetlitmus/docs/gpu-emitters.md. *)
-
 open Printf
 include GpuLang
 
-(* Annotation -> HIP token [HipAtomicHeader]. *)
+(* From [HipAtomicHeader]. *)
 
 let hip_memory_order = function
   | "relaxed" -> "__ATOMIC_RELAXED"
@@ -38,7 +33,7 @@ let hip_scope = function
   | "sys"     -> "__HIP_MEMORY_SCOPE_SYSTEM"
   | s -> Warn.user_error "HipLang: unknown scope %S" s
 
-(* The sync-scope string a fence carries beside its order [D75917]. *)
+(* From [D75917]. *)
 let hip_fence_scope = function
   | "cta"     -> "workgroup"
   | "gpu"     -> "agent"
@@ -47,14 +42,11 @@ let hip_fence_scope = function
   | "sys"     -> ""
   | s -> Warn.user_error "HipLang: unknown fence scope %S" s
 
-(* Locations are kernel int* parameters, so `x' is already the pointer. *)
 let ptr_of_addr_op ~het ao =
   let v = var_of_addr_op ao in
   match het with
   | Some idx -> sprintf "(%s + (%s)*HET_SLOT_STRIDE_WORDS)" v idx
   | None -> v
-
-(* Instruction translation *)
 
 let dump_instr chan ~het ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
@@ -77,8 +69,6 @@ let dump_instr chan ~het ind i = match i with
         ind (hip_memory_order ord) (hip_fence_scope scp) ord scp
   | BellBase.Pnop -> ()
   | _ -> assert false
-
-(* Whole-test emission *)
 
 let dialect = {
     gl_kind = "HIP" ;

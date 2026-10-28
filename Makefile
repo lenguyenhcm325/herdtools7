@@ -653,118 +653,92 @@ RUN_TESTS?=false
 $(V).SILENT:
 $(V)SILENTOPT=-s
 
-### HetLitmus test targets.  Each gate's contract lives in the script it runs,
-### which resolves its own tool paths; the header says what the target proves.
-### Roster and lane split: hetlitmus/docs/README-tests.md.  No target here is a
-### `test::' prerequisite, but upstream `dune runtest' still runs
-### hetlitmus/tests/cram.
+### HetLitmus test targets.
 
-### Building blocks (run solo while iterating).
-### The three corpus trees under _build/default/hetlitmus/tests (het, het-x86_64,
-### gpu-only): grid.py's directory targets, rebuilt only when a generator input
-### changed.  Every gate below lists it, so none reads a stale tree.
+### The three corpus trees under _build/default/hetlitmus/tests.
 hetlitmus-corpus-gen: | build
 	@ echo
 	dune build --profile=$(DUNE_PROFILE) @@hetlitmus/tests/corpus
 	@ echo "HetLitmus corpus trees: OK"
 
-### The corpus rule functions and the emitted drivers, read statically; the
-### dune shared cache is off, so they run.  Promote: `make hetlitmus-promote'.
 hetlitmus-cram: hetlitmus-corpus-gen | build
 	@ echo
 	DUNE_CACHE=disabled dune runtest --profile=$(DUNE_PROFILE) hetlitmus/tests/cram
 	@ echo "HetLitmus cram: OK"
 
-### Every emitted harness carries exactly the memory ops its .litmus annotates,
-### with the right kind, order and scope, and no others -- over a feature cover;
-### `tokens.sh full' sweeps both corpora (hetlitmus/docs/faithfulness.md).
+### Emitted PTX carries exactly the annotated memory ops, over a feature cover.
 hetlitmus-faithful: hetlitmus-corpus-gen | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh all
 	@ echo "HetLitmus PTX faithfulness: OK"
 
-### Every emitted HIP kernel lane and x86_64 CPU body is, line for line, the
-### one its .litmus column names -- source-level, so no toolchain
-### (hetlitmus/docs/faithfulness.md).
+### Emitted HIP lanes and x86_64 CPU bodies match their .litmus columns, at source level.
 hetlitmus-hipsrc: hetlitmus-corpus-gen | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh hipsrc
 	@ echo "HetLitmus HIP source faithfulness: OK"
 
-### A curated sample of emitted harnesses builds end to end through its own
-### comp.sh (hetlitmus/verify/smoke.sh).  Needs nvcc, hipcc and clang.
+### A sample of harnesses builds through its own comp.sh.  Needs nvcc, hipcc and clang.
 hetlitmus-smoke: hetlitmus-corpus-gen | build
 	@ echo
 	bash hetlitmus/verify/smoke.sh
 	@ echo "HetLitmus compile-smoke: OK"
 
-### The GPU scratchpad stress and noise streams are in the emitted PTX
-### (hetlitmus/verify/stresscheck.py).  Needs nvcc, no GPU.
+### GPU stress and noise survive into the emitted PTX.  Needs nvcc.
 hetlitmus-stress: hetlitmus-corpus-gen | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh stress
 	@ echo "HetLitmus stress PTX survival: OK"
 
-### The CPU-side and interconnect stress mechanisms survive -O2 on the AArch64
-### host ISA and do work at run time (hetlitmus/verify/cpustresscheck.py).
+### CPU-side and interconnect stress survive -O2 and run.
 hetlitmus-cpustress: hetlitmus-corpus-gen | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh cpustress
 	@ echo "HetLitmus CPU+interconnect stress liveness: OK"
 
-### No two het corpus tests are the same experiment up to (proc permutation x
-### location renaming) (hetlitmus/verify/dupcheck.py).
+### No two het corpus tests are the same experiment with threads or locations renamed.
 hetlitmus-dup: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
 	@ echo "HetLitmus isomorphism/dedup gate: OK"
 
-### het_verdict() and het_stats_compute() -- what an observation means and what
-### a "Never" is worth -- compiled from the real emitted header and driven with
-### synthetic records (hetlitmus/verify/verdictcheck.py).
+### het_verdict() and het_stats_compute() on synthetic records.
 hetlitmus-verdict: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
 	@ echo "HetLitmus decision rule + aggregate: OK"
 
-### campaign.py's scheduler, end to end against a stub harness: where the
-### hardware hours go (hetlitmus/verify/campaigncheck.py).
+### campaign.py end to end against a stub harness.
 hetlitmus-campaign: | build
 	@ echo
 	python3 hetlitmus/verify/campaigncheck.py
 	@ echo "HetLitmus campaign scheduler: OK"
 
-### One rep render per template shape opens each iteration at the cross-device
-### rendezvous, ahead of the tested accesses; the primitive's source carries a
-### relaxed order and no fence (hetlitmus/verify/rdvcheck.py).
+### Each iteration opens at the rendezvous, which is relaxed and fence-free.
 hetlitmus-rdv: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/rdvcheck.py
 	@ echo "HetLitmus rendezvous placement + primitive: OK"
 
-### Every HET_* define a render stamps is read by litmus/het-runtime/*.h or
-### the render (hetlitmus/verify/stampcheck.py).
+### Every HET_* define a render stamps is read somewhere.
 hetlitmus-stamps: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/stampcheck.py
 	@ echo "HetLitmus emitter stamp binding: OK"
 
-### An AMD harness builds and links into an ELF carrying real gfx942 code, its
-### allocator refusals execute under a stub, and a _cpu.c compiles for its own
-### CPU ISA only.  Needs hipcc, clang and gcc, but no device.
+### An AMD harness builds and links for gfx942.  Needs hipcc, clang and gcc.
 hetlitmus-hipbuild: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/hipbuildcheck.py
 	@ echo "HetLitmus AMD build/link gate: OK"
 
-### What a het harness prints on a device -- the only artefact a result is read
-### off, so its reading is the one its own counts support.  Needs a GPU.
+### A het harness's printed report on a real device.  Needs a GPU.
 hetlitmus-characterize-hw: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py
 	@ echo "HetLitmus harness-printout runtime gate: OK"
 
-### Umbrellas (what you press).  `::' accumulation, order-only `| build'.
+### Umbrellas.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-dup
@@ -774,8 +748,6 @@ hetlitmus-test:: hetlitmus-stamps
 hetlitmus-test:: hetlitmus-rdv
 hetlitmus-test:: hetlitmus-campaign
 
-### The second umbrella takes a target when it needs a toolchain or a device this
-### box may not have, and NOT when it merely concerns GPU code.
 hetlitmus-test-toolchain:: | build
 hetlitmus-test-toolchain:: hetlitmus-faithful
 hetlitmus-test-toolchain:: hetlitmus-stress
@@ -788,12 +760,11 @@ hetlitmus-test-all:: | build
 hetlitmus-test-all:: hetlitmus-test
 hetlitmus-test-all:: hetlitmus-test-toolchain
 
-### Regenerate the cram goldens.  NOT the faithfulness cover, whose route is
-### hetlitmus/verify/covercheck.py --extend.  Does not commit.
+### Regenerate the cram goldens.
 hetlitmus-promote: hetlitmus-corpus-gen | build
 	@ echo
 	dune test --profile=$(DUNE_PROFILE) hetlitmus/tests/cram --auto-promote
-	@ echo "hetlitmus-promote: goldens regenerated (NOT committed); review 'git diff'."
+	@ echo "hetlitmus-promote: cram goldens regenerated."
 
 .PHONY: hetlitmus-corpus-gen hetlitmus-cram hetlitmus-faithful
 .PHONY: hetlitmus-smoke

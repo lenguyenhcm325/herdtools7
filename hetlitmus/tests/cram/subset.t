@@ -1,4 +1,4 @@
-The device-run subset: hetlitmus/docs/corpus-grid.md "Device-run subset".
+The device-run subset.
 
 Its size.
   $ wc -l < ../het-subset.txt

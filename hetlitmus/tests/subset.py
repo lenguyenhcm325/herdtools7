@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""subset.py -- select the device-run subset of a het tree grid.py built: every
-experiment at its unordered and its fully fenced cell, and the full grid of
-FULL_GRID_SHAPES.  Rationale: hetlitmus/docs/corpus-grid.md "Device-run subset".
+"""Select the device-run subset of a het tree.
 
 Usage: subset.py --corpus DIR [--cpu-arch aarch64|x86_64] --out FILE
 Output: one test name per line, sorted.
@@ -19,11 +17,10 @@ PARTS = ["unordered", "fully-fenced", "full-grid"]
 
 
 class SubsetError(ValueError):
-    """A tree that is not grid.py's whole output for this ISA."""
+    """An unusable --corpus tree."""
 
 
 def read_tree(d):
-    """-> (survivor names, dropped name -> survivor)."""
     try:
         with open(os.path.join(d, "@all")) as f:
             listed = set(l.strip() for l in f if l.strip())
@@ -41,7 +38,6 @@ def read_tree(d):
 
 
 def select(isa, survivors, alias):
-    """-> {test: part}; a test keeps the first part that takes it."""
     def resolve(name):
         s = alias.get(name, name)
         if s not in survivors:
@@ -55,7 +51,6 @@ def select(isa, survivors, alias):
             for tag in grid.cut_classes(cycle):
                 name = grid.het_name(isa, shape, tag, "sys", cpu, gpu)
                 parts.setdefault(resolve(name), part)
-    # Every cell resolves, so a tree of another ISA is refused.
     for shape, _, tag, scope, cpu, gpu in grid.het_cells(isa):
         name = resolve(grid.het_name(isa, shape, tag, scope, cpu, gpu))
         if shape in FULL_GRID_SHAPES:

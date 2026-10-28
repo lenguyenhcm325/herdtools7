@@ -14,15 +14,10 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: emit a CUDA C++ (.cu) litmus kernel from a parsed LISA/Bell
-   scoped test -- the libcu++ / inline-PTX lowering and the emitted CUDA
-   tokens; gpuLang holds everything shared with HipLang.
-   Design: hetlitmus/docs/gpu-emitters.md. *)
-
 open Printf
 include GpuLang
 
-(* Annotation -> libcu++ token [CCCL]. *)
+(* From [CCCL]. *)
 
 let memory_order = function
   | "relaxed" -> "cuda::memory_order_relaxed"
@@ -38,8 +33,8 @@ let thread_scope = function
   | "sys"     -> "cuda::thread_scope_system"
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
 
-(* One inline PTX fence per annotated order, rather than the collapsed
-   cuda::atomic_thread_fence (hetlitmus/docs/gpu-emitters.md, "Fence lowering"). *)
+(* One inline PTX fence per annotated order: cuda::atomic_thread_fence collapses
+   acquire, release and acq_rel into fence.acq_rel [CCCL]. *)
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
   | "release" -> "release"
@@ -47,21 +42,17 @@ let ptx_fence_sem = function
   | "sc"      -> "sc"
   | s -> Warn.user_error "CudaLang: unknown fence order %S" s
 
-(* PTX fence scope suffix: the LISA scope names coincide with .cta/.gpu/.sys. *)
 let ptx_scope = function
   | "cta" -> "cta" | "gpu" -> "gpu" | "sys" -> "sys"
   | s -> Warn.user_error "CudaLang: unknown fence scope %S" s
 
-(* Target floor per fence order [PtxISA "membar/fence"]
-   [CCCL "cuda/__ptx/instructions/generated/fence.h"]. *)
 let one_sided ord = ord = "acquire" || ord = "release"
 
 let fence_min_arch ord =
   if one_sided ord then "requires sm_90" else "sm_70+"
 
 (* The sm_90 floor of a one-sided fence [PtxISA "membar/fence"] is enforced
-   here, ptxas assembling it for any sm_70+ target
-   (hetlitmus/docs/gpu-emitters.md, "Fence floors"). *)
+   here: ptxas assembles it for any sm_70+ target and the device faults at launch. *)
 let fence_floor_guard instrs =
   let needs_sm90 = function
     | BellBase.Pfence (BellBase.Fence (annots, _)) ->
@@ -73,20 +64,16 @@ let fence_floor_guard instrs =
      #endif\n\n"
   else ""
 
-(* Locations are kernel int* parameters, so an access dereferences. *)
 let lvalue_of_addr_op ~het ao =
   let v = var_of_addr_op ao in
   match het with
   | Some idx -> sprintf "*(%s + (%s)*HET_SLOT_STRIDE_WORDS)" v idx
   | None -> sprintf "*%s" v
 
-(* Instruction translation *)
-
 let scoped_ref ind chan var scope =
   fprintf chan "%scuda::atomic_ref<int, %s> ref(%s);\n"
     ind (thread_scope scope) var
 
-(* A load's dest reg is declared at proc scope; here it is only assigned. *)
 let dump_instr chan ~het ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
       let var = var_of_addr_op ao in
@@ -110,8 +97,6 @@ let dump_instr chan ~het ind i = match i with
         ind (ptx_fence_sem ord) (ptx_scope scp) (fence_min_arch ord)
   | BellBase.Pnop -> ()
   | _ -> assert false
-
-(* Whole-test emission *)
 
 let dialect = {
     gl_kind = "CUDA" ;

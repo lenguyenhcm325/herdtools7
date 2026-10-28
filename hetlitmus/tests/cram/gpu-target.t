@@ -1,11 +1,11 @@
-`-gpu-target' (litmus/hetDialect.ml; hetlitmus/docs/gpu-emitters.md).
+`-gpu-target' (litmus/hetDialect.ml).
 
 (a) a CUDA emission carries the .cu and not the .hip.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-plain.rlx.litmus >/dev/null 2>&1
   $ ls MP-cg-sys-plain.rlx | grep -E '\.(cu|hip)$'
   MP-cg-sys-plain.rlx.cu
 
-(b) ...and its build files and its prose name that vendor only.
+(b) its build files and prose name that vendor only.
   $ grep -ciE 'hip|amd' MP-cg-sys-plain.rlx/comp.sh MP-cg-sys-plain.rlx/Makefile MP-cg-sys-plain.rlx/README.md || true
   MP-cg-sys-plain.rlx/comp.sh:0
   MP-cg-sys-plain.rlx/Makefile:0
@@ -13,8 +13,7 @@
   $ grep -c 'Usage: sh comp.sh \[cuda|cuda-link\]' MP-cg-sys-plain.rlx/comp.sh
   1
 
-(c) the HIP emission is the mirror image, from the x86_64 tree: the flag names
-a GPU dialect, but a harness is a (CPU ISA x GPU dialect) pair.
+(c) the HIP emission is the mirror image, from the x86_64 tree.
   $ mkdir hip
   $ litmus7 -gpu-target hip -o hip ../het-x86_64/MP-cg-sys-plain.rlx-x86_64.litmus >/dev/null 2>&1
   $ ls hip/MP-cg-sys-plain.rlx-x86_64 | grep -E '\.(cu|hip)$'
@@ -25,13 +24,11 @@ a GPU dialect, but a harness is a (CPU ISA x GPU dialect) pair.
   hip/MP-cg-sys-plain.rlx-x86_64/Makefile:0
   hip/MP-cg-sys-plain.rlx-x86_64/README.md:0
 
-(d) the .hip banner names the hip build commands, not a rule this directory has
-no arm for.
+(d) the .hip banner names the hip build commands.
   $ grep -c 'comp.sh hip-link / make hip-bin' hip/MP-cg-sys-plain.rlx-x86_64/MP-cg-sys-plain.rlx-x86_64.hip
   1
 
-(e) both ways, the absent vendor's build entry points refuse by name; GNU make's
-`make:' prefix follows MAKELEVEL, so it is unread.
+(e) a CUDA harness refuses the HIP build commands, and a HIP harness the CUDA ones.
   $ cd MP-cg-sys-plain.rlx
   $ make hip-bin >/dev/null 2>../hip-bin.err; echo "exit $?"
   exit 2
@@ -72,8 +69,7 @@ no arm for.
   HetLitmus REFUSED (gpu-only) ../gpu-only/MP-sys-acq.litmus: -gpu-target <cuda|hip> is required: an emission renders ONE GPU dialect, and the harness it writes carries only that vendor's render and build targets
   exit 3
 
-(i) an emission leaves the `-o' root holding its harness and nothing else, on
-both dispatch arms.
+(i) the `-o' root holds the harness and nothing else, on both dispatch arms.
   $ mkdir root
   $ litmus7 -gpu-target cuda -o root ../het/MP-cg-sys-plain.rlx.litmus >/dev/null 2>&1
   $ ls root
@@ -81,7 +77,7 @@ both dispatch arms.
   $ ls gpu
   MP-sys-acq.cu
 
-(j) a `.tar' target is packed rather than written beside itself.
+(j) `-o x.tar' puts the harness directory in a tar archive instead of a directory named `x.tar'.
   $ litmus7 -gpu-target cuda -o packed.tar ../het/MP-cg-sys-plain.rlx.litmus >/dev/null 2>&1; echo "exit $?"
   exit 0
   $ tar tf packed.tar | sed 's|^\./||' | grep -c '^MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu$'
@@ -89,8 +85,7 @@ both dispatch arms.
   $ tar tf packed.tar | sed 's|^\./||' | grep -cE '^(README.txt|Makefile|comp.sh|run.sh)$' || true
   0
 
-(k) a plain CPU-only litmus7 run neither needs the flag nor is changed by it.
-The libdir is walked up from cwd because it cannot be a dune dep (see ./dune).
+(k) a plain CPU-only litmus7 run neither needs the flag nor changes with it.
   $ LIB=$(d=.; while [ ! -f "$d/litmus/libdir/_aarch64/mbar.c" ] && [ "$(cd "$d" && pwd)" != / ]; do d=$d/..; done; echo "$d/litmus/libdir")
   $ test -f "$LIB/header.txt" && echo libdir-found
   libdir-found

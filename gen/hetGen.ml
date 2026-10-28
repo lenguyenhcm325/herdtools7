@@ -14,17 +14,8 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus hetgen7 -- generate one heterogeneous (compound) litmus test in
-   the `Het` format (hetlitmus/docs/het-litmus-format.md).
-
-   The cycle engine is monomorphic in one architecture, so this driver runs it
-   once per device on the same cycle shape and merges the columns, the init
-   atoms and the condition atoms.
-   hetlitmus/docs/het-litmus-format.md "One run per device". *)
-
 open Printf
 
-(* Extra flags; the rest are reused from Config.diyone_spec. *)
 let cpu_edges = ref ""
 let gpu_edges = ref ""
 let devices = ref "cpu,gpu"
@@ -51,8 +42,6 @@ let myspec =
    "<text> documentation comment line for the test";
   ]
 
-(* The generator takes one condition style, so the shared spec's -cond doc is
-   narrowed here and its -unicond alias dropped. *)
 let spec () =
   myspec @
   List.filter_map
@@ -64,8 +53,6 @@ let spec () =
      | _ -> Some (key,act,doc))
     (Config.diyone_spec ())
 
-(* Small string helpers; no Str dependency. *)
-
 let split_tokens s =
   List.filter (fun x -> x <> "")
     (String.split_on_char ' ' (String.trim s))
@@ -74,7 +61,6 @@ let split_comma s =
   List.filter (fun x -> x <> "")
     (List.map String.trim (String.split_on_char ',' s))
 
-(* split a condition body on the 2-char and-connective /\ *)
 let split_and s =
   let sep = "/\\" in
   let n = String.length s and m = String.length sep in
@@ -85,8 +71,6 @@ let split_and s =
     else go start (i+1) acc in
   if n = 0 then [] else go 0 0 []
 
-(* the proc owning a state/condition atom: the digits before its first ':'
-   (1:r0=1 -> Some 1); a global atom (x=0) -> None *)
 let proc_of_atom a =
   match String.index_opt a ':' with
   | Some k when k > 0
@@ -105,16 +89,12 @@ let parse_cond s =
       (quant, List.map String.trim (split_and body))
 
 let generate () =
-  (* The merge splices per-proc atoms out of a flat conjunction of the two runs'
-     conditions, which only -cond cycle produces.
-     hetlitmus/docs/het-litmus-format.md "Limits". *)
   (match !Config.cond with
    | Config.Cycle -> ()
    | Config.Unicond | Config.Observe ->
       Warn.fatal
         "-cond unicond/observe is unsupported: the het merge splices a flat \
          conjunction of per-proc atoms, which only -cond cycle produces") ;
-  (* Top_gen configuration, mirroring diyone's (DumpAll fields not needed). *)
   let module Co = struct
     let verbose = !Config.verbose
     let generator = Config.baseprog
@@ -151,18 +131,12 @@ let generate () =
     let variant = !Config.variant
     let wildcard = false
   end in
-  (* GPU builder fixed (LISA/Bell); CPU builder dispatched by -cpu-arch below.
-     Both instantiated as in diyone.ml. *)
   let module BellConfig = Config.ToLisa(Config) in
   let module Mgpu = Top_gen.Make(Co)(BellCompile.Make(C)(BellConfig)) in
 
   let name = match !Config.name with Some n -> n | None -> "HET" in
 
-  (* One device's run: parse its edge list into the single cycle the merge
-     assumes, build the test, erase to cells.  [opt] labels the arity error. *)
   let module HetRun (M:Builder.S) = struct
-    (* Per-edge value the two cycles are compared on.
-       hetlitmus/docs/het-litmus-format.md "One run per device". *)
     let skeleton opt i e =
       let refuse what =
         Warn.fatal
@@ -193,8 +167,6 @@ let generate () =
         with
         | [x] -> x
         | _ -> Warn.fatal "%s must specify exactly one cycle" opt in
-      (* Not inlined into the tuple: tuples evaluate right to left, so a
-         refused edge would fail under the engine's message, not its own. *)
       let shape = List.mapi (skeleton opt) cy in
       (shape, M.het_cells (M.make_test name cy))
   end in
@@ -204,8 +176,6 @@ let generate () =
   if !Config.bell = None then
     Warn.fatal "missing -bell <gpu.bell> (the GPU side needs a Bell model)" ;
 
-  (* CPU side: dispatch the single-arch Compile_gen by -cpu-arch.  het_cells
-     erases the arch to strings, so both branches give ccpu the same type. *)
   let cpu_shape,ccpu =
     match !cpu_arch with
     | `AArch64 ->
@@ -216,8 +186,6 @@ let generate () =
        R.cells "-cpu" !cpu_edges in
   let gpu_shape,cgpu = let module R = HetRun(Mgpu) in R.cells "-gpu" !gpu_edges in
 
-  (* An equal proc count is not an equal shape: MP against SB splices into a
-     test that is neither. *)
   let rec first_diff i cs gs = match cs,gs with
   | [],[] -> None
   | c::cs,g::gs ->
@@ -234,7 +202,6 @@ let generate () =
         (String.concat " " cpu_shape) (String.concat " " gpu_shape)) ;
 
   let devs = split_comma !devices in
-  (* A het test has at least one gpu proc. *)
   if not (List.mem "gpu" devs) then
     Warn.fatal
       "-devices %s names no gpu proc; a het test needs at least one, and an \
@@ -245,7 +212,6 @@ let generate () =
     | "cpu" -> ccpu
     | "gpu" -> cgpu
     | d -> Warn.fatal "unknown device '%s' (expected cpu|gpu)" d in
-  (* Both runs must agree on the proc count: the merge's shape precondition. *)
   List.iter
     (fun (who,hc) ->
       if List.length hc.HetCells.hc_cols <> nprocs then
@@ -254,13 +220,9 @@ let generate () =
           nprocs who (List.length hc.HetCells.hc_cols))
     ["cpu",ccpu; "gpu",cgpu] ;
 
-  (* The header tag names the CPU ISA (AArch64 keeps the `cpu' alias) so
-     litmus7's Het arm picks the matching sub-parser; run_of still keys on the
-     device class.  hetlitmus/docs/het-litmus-format.md "The file format". *)
   let cpu_tag = match !cpu_arch with `AArch64 -> "cpu" | `X86_64 -> "x86_64" in
   let header_tag = function "cpu" -> cpu_tag | other -> other in
 
-  (* Columns: each proc's cells come from the run owning that proc's device. *)
   let cols =
     List.mapi
       (fun i dev ->
@@ -272,7 +234,6 @@ let generate () =
       devs in
   let table = Misc.string_of_prog cols in
 
-  (* Init: each proc's reg atoms from its owner; globals unioned (deduped). *)
   let per_proc_init =
     List.concat
       (List.mapi
@@ -290,9 +251,8 @@ let generate () =
       [] (globals_of ccpu @ globals_of cgpu) in
   let init_lines = global_init @ per_proc_init in
 
-  (* Condition: each proc's atoms from its owner; global atoms (proc = None)
-     unioned across BOTH runs, as [global_init] above -- taking them from the
-     cpu run alone drops a global atom only the gpu run carries. *)
+  (* Global atoms come from both runs: one run alone can miss an atom only the
+     other carries. *)
   let merged_cond =
     let quant,_ = parse_cond ccpu.HetCells.hc_cond in
     let per_proc =
@@ -310,14 +270,9 @@ let generate () =
         (fun acc s -> if List.mem s acc then acc else acc @ [s])
         [] (cond_globals_of ccpu @ cond_globals_of cgpu) in
     let atoms = per_proc @ globals in
-    (* Empty atom list: emit <quant> (true), the trivially-true condition
-       (ConstrGen.constr_true); <quant> () would be malformed. *)
     if atoms = [] then sprintf "%s (true)" quant
     else sprintf "%s (%s)" quant (String.concat " /\\ " atoms) in
 
-  (* A parseable nested `scopes:' body tree (grammar lib/scopeRules.mly): each
-     GPU proc nests in its own CTA, CPU procs sit at the sys root by default.
-     hetlitmus/docs/het-litmus-format.md "The scopes tree". *)
   let gpu_procs =
     Misc.filter_map (fun (i,dev) -> if dev = "gpu" then Some i else None)
       (List.mapi (fun i dev -> (i,dev)) devs) in
@@ -344,15 +299,12 @@ let generate () =
   bprintf buf "%s\n" merged_cond ;
   print_string (Buffer.contents buf)
 
-(* A refusal leaves as diy7's and diyone7's do: `<prog>: Fatal error: <msg>'
-   on stderr, exit 2.  An option action refuses too, so the command line is
-   parsed inside the handler. *)
 let () =
   try
     Util.parse_cmdline
       ~usage_suffix:Config.diyone_parser_syntax_doc
       (spec ())
-      (fun _ -> () (* het cycles arrive via -cpu/-gpu; ignore positionals *)) ;
+      (fun _ -> ()) ;
     Config.validate_variant () ;
     generate ()
   with

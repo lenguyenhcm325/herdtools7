@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""What one het harness prints on this box's GPU: emitted, built through
-hetlitmus/build.sh, run on fresh seeds until the outcome fires or a run is
-discarded, then run again under rendezvous caps of zero polls.  Pinned: the
-HetVerdict and HetStats lines, the sentence of the arm the run took, and that
-the cap-0 run scores nothing, is COLD-INVALID naming the dead partner, and
-claims no reach.  A miss means a printed arm was decided with nothing
-recording it.  Needs litmus7, nvcc and a CUDA device.
-"""
+"""What one het harness prints on this box's GPU.  Needs litmus7, nvcc and a CUDA device."""
 
 import argparse
 import os
@@ -23,15 +16,11 @@ import census
 import ptxcheck as ptx
 
 BUILD_SH = os.path.join(ptx.REPO, "hetlitmus", "build.sh")
-# The relaxed MP row whose CPU column is this host's: the emitted link target
-# refuses a foreign one.
 HOST = {"x86_64": ("X86_64", census.X86_DIR, "MP-cg-sys-plain.rlx-x86_64"),
         "aarch64": ("AArch64", census.HET_DIR, "MP-cg-sys-plain.rlx"),
         "arm64": ("AArch64", census.HET_DIR, "MP-cg-sys-plain.rlx")}
 SEED_TRIES = 12
 RUN_TIMEOUT = 600
-# Curtailed runs and a short host cap keep a run inside the timeout; the device
-# cap stays, since a short one makes a clean run rare.  The environment wins.
 RUN_ENV = {"HET_ALLOC": "pinned", "HET_RUNS_MAX": "2", "HET_CAP_CPU": "4096"}
 
 STATS = re.compile(r"^HetStats \S+ obs=\S+ R=\d+ usable=\d+ k=(\d+) ", re.M)
@@ -43,7 +32,6 @@ DEAD_PARTNER = "A timed-out rendezvous is a DEAD PARTNER"
 
 
 def arch():
-    """sm_XY of the device this runs on, never a hardcoded one."""
     if os.environ.get("CUDA_ARCH"):
         return os.environ["CUDA_ARCH"]
     r = subprocess.run(["nvidia-smi", "--query-gpu=compute_cap",
@@ -53,7 +41,6 @@ def arch():
 
 
 def build(tmp, litmus, sm):
-    """The harness binary hetlitmus/build.sh produces from the emission."""
     emit = os.path.join(tmp, "emit")
     os.makedirs(emit)
     cu, _ = ptx.emit_harness(litmus, emit)
@@ -69,23 +56,18 @@ def build(tmp, litmus, sm):
 
 
 def run(exe, **knobs):
-    """The printout of one invocation."""
     env = dict(RUN_ENV, **os.environ)
     env.update(knobs)
     try:
         r = subprocess.run([exe], cwd=os.path.dirname(exe), env=env,
                            capture_output=True, text=True, timeout=RUN_TIMEOUT)
     except subprocess.TimeoutExpired:
-        # Every rendezvous wait is capped in polls, so a run that does not
-        # finish is a launch or driver fault, not a slow box.
         raise SystemExit("runcheck: the run did not finish in %ds under %s" % (
             RUN_TIMEOUT, " ".join("%s=%s" % kv for kv in knobs.items())))
     return r.stdout + "\n" + r.stderr
 
 
 def run_until_sighting(exe):
-    """(printout, k) of the last run: fresh seeds until the outcome fires, a
-    run is discarded, or the seeds run out."""
     for i in range(1, SEED_TRIES + 1):
         text = run(exe, HET_SEED=str(1000 + i))
         m = STATS.search(text)
@@ -116,8 +98,6 @@ def check_arm(text, k, test, pair):
 
 
 def check_cap0(text):
-    """Under caps of zero polls the earlier arriver of every iteration times
-    out: nothing scored, COLD-INVALID naming the partner, no reach claimed."""
     bad = []
     m = RDV.search(text)
     if not m:

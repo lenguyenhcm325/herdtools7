@@ -14,10 +14,4 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the emitted driver's main() -- allocation, launch, the run loop,
-   the slot readout and teardown -- written in one GPU dialect.
-   Design: hetlitmus/docs/het-emission.md. *)
-
-(* Write the main() that closes a render, in that render's dialect.  The phase
-   functions the run loop is sequenced from are the file's own. *)
 val dump : HetHarness.t -> HetDialect.gpu_dialect -> out_channel -> unit

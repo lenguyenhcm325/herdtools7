@@ -1,10 +1,6 @@
-Condition-compiler guard (hetlitmus/docs/het-emission.md).
+Condition-compiler guard.
 
-The emitted condition must NEVER silently drop or vacuously satisfy a [x]=N
-(Location_global) atom; each pattern is pinned to its exact column index.
-
-2+2W -- pure-location [x]=2 /\ [y]=2: both halves keep their label, are read out
-of their own slot, and are compared in the detector.
+2+2W: both [x]=2 and [y]=2 are read from their slots and compared.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-plain.fsc.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' 2+2W-cg-sys-plain.fsc/2+2W-cg-sys-plain.fsc.cu
   static const char* _labels[2] = { "[x]", "[y]" };
@@ -15,8 +11,7 @@ of their own slot, and are compared in the detector.
   $ grep -c 'int _weak = ((_o\[0\] == 2) && (_o\[1\] == 2));' 2+2W-cg-sys-plain.fsc/2+2W-cg-sys-plain.fsc.cu
   1
 
-R -- mixed 1:r0=0 /\ [y]=2: the register half is its read buffer at _n, the [y]
-half is y's own slot n, and both are in the detector.
+R: a register atom reads its buffer, a location atom its slot.
   $ litmus7 -gpu-target cuda -o . ../het/R-cg-sys-plain.fsc.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' R-cg-sys-plain.fsc/R-cg-sys-plain.fsc.cu
   static const char* _labels[2] = { "1:r0", "[y]" };
@@ -27,8 +22,7 @@ half is y's own slot n, and both are in the detector.
   $ grep -c 'int _weak = ((_o\[0\] == 0) && (_o\[1\] == 2));' R-cg-sys-plain.fsc/R-cg-sys-plain.fsc.cu
   1
 
-MP -- pure-register control: no Location_global atom, so no [ ] label and no
-slot read; the two shapes above emit that read when it is owed.
+MP: no location atom, so no slot read.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-ra.acq.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu
   static const char* _labels[2] = { "1:r0", "1:r1" };

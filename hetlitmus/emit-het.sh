@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Emit one harness dir per test of CORPUS into EMIT, one litmus7 run at a time:
-# the batch driver exits 0 on a refusal, so every test is read on BOTH its own
-# exit status and the "HetLitmus REFUSED" marker.  Each test's litmus7 output is
-# appended to $RESULTS/emit.log under a header naming it.
-#
+# Emit one harness dir per test, one litmus7 run each.
 # usage: emit-het.sh --gpu-target cuda|hip CORPUS [--tests LIST|FILE] [-o EMIT]
 #   RESULTS  the results dir (default hetlitmus/run-out/<date>-<host>);
 #            EMIT defaults to $RESULTS/emit.
@@ -49,9 +45,8 @@ RESULTS="$(cd "$RESULTS" && pwd)"
 mkdir -p "$EMIT"
 EMIT="$(cd "$EMIT" && pwd)"
 
-# --tests as a comma list or as a file with one name per line, `#' and blanks
-# ignored -- the first field of a line is the name.
-name_list() {                   # <LIST|FILE>
+# --tests: a comma list, or a file of one name per line (`#' and blanks ignored).
+name_list() {
   if [ -f "$1" ]; then
     awk 'NF && $1 !~ /^#/ { print $1 }' "$1"
   else

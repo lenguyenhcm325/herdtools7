@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""grid.py -- generate a HetLitmus corpus: the het one (shape x device cut x
-GPU scope x GPU order x CPU order, through hetgen7) or the gpu-only one (its
-all-GPU cut, through diyone7).  Axes, cut reduction, name formats and the
-byte-dedup: hetlitmus/docs/corpus-grid.md.
+"""Generate a HetLitmus corpus: het (through hetgen7) or gpu-only (through diyone7).
 
 Usage: grid.py --corpus het|gpu-only [--cpu-arch aarch64|x86_64] --out DIR
                --bell FILE --libdir DIR (--hetgen7 PATH | --diyone7 PATH)
@@ -21,9 +18,7 @@ class GridError(ValueError):
     """A table lookup or a cycle the tables do not admit."""
 
 
-# --- tables -----------------------------------------------------------------
-
-SHAPES = [                       # name, base cycle (one proc per external edge)
+SHAPES = [
     ("MP",      "PodWW Rfe PodRR Fre"),
     ("SB",      "PodWR Fre PodWR Fre"),
     ("LB",      "PodRW Rfe PodRW Rfe"),
@@ -57,12 +52,11 @@ SHAPES = [                       # name, base cycle (one proc per external edge)
 
 SCOPES = ["cta", "gpu", "sys"]
 
-# The list order decides which name survives the byte-dedup.
 GPU_ORDERS = ["rlx", "acq", "rel", "ra", "sc", "fsc", "facq", "frel", "fra"]
 
 SCOPE_CC = {"cta": "Cta", "gpu": "Gpu", "sys": "Sys"}
 
-ACCESS_ORDERS = {                # order -> (read annotation, write annotation)
+ACCESS_ORDERS = {
     "rlx": ("Relaxed", "Relaxed"),
     "acq": ("Acquire", "Relaxed"),
     "rel": ("Relaxed", "Release"),
@@ -70,19 +64,15 @@ ACCESS_ORDERS = {                # order -> (read annotation, write annotation)
     "sc":  ("Sc", "Sc"),
 }
 
-FENCE_ORDERS = {                 # order -> the standalone fence's annotation
+FENCE_ORDERS = {
     "fsc": "Sc", "facq": "Acquire", "frel": "Release", "fra": "Acqrel",
 }
 
-ARM_ATOM = {"R": "Q", "W": "L"}  # ra: LDAPR on a read, STLR on a write
+ARM_ATOM = {"R": "Q", "W": "L"}
 ARM_FENCE = {"sy": "DMB.SY", "st": "DMB.ST", "ld": "DMB.LD"}
 
 
-# --- renderers --------------------------------------------------------------
-
 def edge_src_dst(edge):
-    """-> (src dir, dst dir, location letter, XY) -- the last two "" on an
-    external edge; a fence edge is spelled <fence><letter><XY>."""
     m = re.fullmatch(r"Po([ds])([WR])([WR])", edge)
     if m:
         return m.group(2), m.group(3), m.group(1), m.group(2) + m.group(3)
@@ -93,9 +83,6 @@ def edge_src_dst(edge):
 
 
 def render_gpu(scope, order, cycle):
-    """The Bell/LISA edge token list of one cell: every access annotated
-    <Order><Scope> on both sides, or every access Relaxed with a standalone
-    fence edge on each Po edge at the cell's scope."""
     if scope not in SCOPE_CC:
         raise GridError("bad scope: %s (one of: %s)" % (scope, " ".join(SCOPES)))
     sc = SCOPE_CC[scope]
@@ -119,8 +106,6 @@ def render_gpu(scope, order, cycle):
 
 
 def render_cpu_aarch64(order, cycle):
-    """plain: the bare cycle; ra: Q on reads, L on writes; sy|st|ld: the
-    barrier edge on each Po edge, external edges bare."""
     out = []
     for e in cycle.split():
         src, dst, loc, xy = edge_src_dst(e)
@@ -137,7 +122,6 @@ def render_cpu_aarch64(order, cycle):
 
 
 def render_cpu_x86_64(order, cycle):
-    """plain: the bare cycle; mf: MFence on each Po edge, external edges bare."""
     out = []
     for e in cycle.split():
         _, _, loc, xy = edge_src_dst(e)
@@ -151,9 +135,6 @@ def render_cpu_x86_64(order, cycle):
     return " ".join(out)
 
 
-# One profile per CPU ISA: the -cpu-arch tag hetgen7 takes, the file-name
-# suffix, the CPU-order list, the order with a full barrier on every Po edge
-# and the renderer.  A new ISA is one row + one renderer.
 CPU_ISAS = {
     "aarch64": {"tag": "aarch64", "suffix": "",
                 "orders": ["plain", "ra", "sy", "st", "ld"], "barrier": "sy",
@@ -172,27 +153,20 @@ def render_cpu(isa, order, cycle):
 
 
 def scope_tree(n):
-    """The parseable scopes: tree of an n-proc gpu-only test, one CTA per proc."""
     return "(sys (gpu%s))" % "".join(" (cta %d)" % i for i in range(n))
 
 
 def cut_tag(cut):
-    """cpu,gpu -> cg; gpu,cpu,cpu -> gcc (a sequence or a comma list)."""
     if isinstance(cut, str):
         cut = cut.split(",")
     return "".join({"cpu": "c", "gpu": "g"}[d] for d in cut)
 
 
 def cut_devices(tag):
-    """cg -> cpu,gpu: the -devices list of a cut tag."""
     return ",".join({"c": "cpu", "g": "gpu"}[ch] for ch in tag)
 
 
-# --- cuts and their reduction -----------------------------------------------
-
 def segments(cycle):
-    """The cycle as diy's proc list: rotated to its first Po edge, then one
-    segment per proc = its run of Po edges plus the external edge leaving it."""
     edges = cycle.split()
     po = [bool(edge_src_dst(e)[2]) for e in edges]
     if not any(po):
@@ -215,21 +189,16 @@ def nprocs(cycle):
 
 
 def symmetry(cycle):
-    """The segment rotations that leave the segment list unchanged."""
     segs = segments(cycle)
     return [k for k in range(len(segs)) if segs[k:] + segs[:k] == segs]
 
 
 def raw_cuts(n):
-    """Every cpu/gpu assignment of n procs but all-cpu and all-gpu, smallest
-    tag first."""
     return [c for c in itertools.product(("cpu", "gpu"), repeat=n)
             if len(set(c)) > 1]
 
 
 def cut_classes(cycle):
-    """The cut tags, one per orbit of raw_cuts under symmetry(cycle), each
-    orbit represented by its smallest tag."""
     rots = symmetry(cycle)
     seen, classes = set(), []
     for cut in raw_cuts(nprocs(cycle)):
@@ -240,10 +209,7 @@ def cut_classes(cycle):
     return classes
 
 
-# --- the loops ---------------------------------------------------------------
-
 def run_tool(name, path, args, cwd=None):
-    """Run one generator call; its non-zero exit aborts the run with its stderr."""
     r = subprocess.run([name] + args, executable=path, cwd=cwd,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if r.returncode != 0:
@@ -259,8 +225,6 @@ def het_name(isa, shape, tag, scope, cpu, gpu):
 
 
 def het_cells(isa):
-    """Every het cell as (shape, cycle, cut tag, scope, cpu, gpu), in the
-    generation order that decides which name survives the byte-dedup."""
     for shape, cycle in SHAPES:
         for tag in cut_classes(cycle):
             for scope in SCOPES:
@@ -310,15 +274,12 @@ def gen_gpu_only(a):
 
 
 def body_key(path):
-    """The file from its `{' line on: the test minus its name and comment."""
     with open(path, "rb") as f:
         lines = f.read().split(b"\n")
     return b"\n".join(lines[lines.index(b"{"):])
 
 
 def dedup(out, names):
-    """Delete every test whose body equals an earlier one's; -> survivors and
-    the list of (dropped name, survivor)."""
     survivor, kept, dropped = {}, [], []
     for name in names:
         path = os.path.join(out, name + ".litmus")
@@ -357,7 +318,6 @@ def main(argv=None):
                              ("--libdir", a.libdir, os.path.isdir)):
         if not test(path):
             ap.error("%s %s does not exist" % (what, path))
-    # diyone7 runs with cwd = OUT, so every path it is handed is absolute.
     a.out, a.bell, a.libdir = map(os.path.abspath, (a.out, a.bell, a.libdir))
     if a.corpus == "het":
         a.hetgen7 = os.path.abspath(tool)

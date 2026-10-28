@@ -52,10 +52,6 @@ open struct module X86_64 = X86_64Base end
 %type <MiscParser.proc list * (X86_64Base.pseudo) list list> main
 %start  main
 
-(* HetLitmus: the single-column entry point ARM/AArch64/PPC/RISCV already
-   expose, for parsing one processor column of a compound `Het' test
-   (litmus/hetCpuFront.ml).  X86_64 has parsedInstruction = instruction, so
-   this returns the parsedPseudo list HetArch.of_cpu_parsed consumes. *)
 %type <X86_64Base.pseudo list> instr_option_seq
 %start instr_option_seq
 
