@@ -1,5 +1,4 @@
-/* Adapted from cuda-litmus [CudaLitmus].  The scratchpad must stay disjoint from every test
- * location [Sorensen16 sec 1]. */
+/* Adapted from [CudaLitmus]. */
 #ifndef HET_STRESS_H
 #define HET_STRESS_H
 
@@ -13,30 +12,31 @@
 #include <cuda/atomic>
 #endif
 
-/* Defaults from [CudaLitmus] params/stress_params.txt, except
+/* Defaults from [CudaLitmus params/stress_params.txt], except
  * HET_GPU_MEM_STRESS_PCT; tune them on the GPU under test, since settings
- * tuned on one chip may not suit another [Kirkham20 sec 6.4]. */
+ * tuned on one chip may not suit another [Kirkham20]. */
 #ifndef HET_GPU_SCRATCH_WORDS
 #define HET_GPU_SCRATCH_WORDS 4608     /* uint32 words */
 #endif
 #ifndef HET_GPU_WORDS_PER_REGION
-#define HET_GPU_WORDS_PER_REGION 16    /* patch size P [Sorensen16 sec 3.2] */
+#define HET_GPU_WORDS_PER_REGION 16
 #endif
 #ifndef HET_GPU_SPREAD
-#define HET_GPU_SPREAD 9               /* spread m [Sorensen16 sec 3.4] */
+#define HET_GPU_SPREAD 9
 #endif
 #ifndef HET_GPU_STRESS_ASSIGN
 #define HET_GPU_STRESS_ASSIGN 1        /* 0 = round-robin, 1 = chunking */
 #endif
 #ifndef HET_GPU_MEM_STRESS_PCT
-#define HET_GPU_MEM_STRESS_PCT 100     /* % of iterations; 100 from [WebGPULitmus] */
+/* 100 is webgpu-litmus's allStressConfig,
+   https://github.com/reeselevine/webgpu-litmus/blob/c7234af7cefd90f7206152b9255eee3e58ff989c/components/stressPanel.js#L190 */
+#define HET_GPU_MEM_STRESS_PCT 100     /* % of iterations */
 #endif
 #ifndef HET_GPU_MEM_STRESS_ROUNDS
 #define HET_GPU_MEM_STRESS_ROUNDS 445
 #endif
-/* Divergence: [CudaLitmus] litmus.cuh:346 passes a count here, matching no branch. */
 #ifndef HET_GPU_MEM_STRESS_PATTERN
-#define HET_GPU_MEM_STRESS_PATTERN 0   /* 0 = st;st, the pure writer [Sorensen16 sec 3.3] */
+#define HET_GPU_MEM_STRESS_PATTERN 0   /* 0 = st;st */
 #endif
 #ifndef HET_GPU_PRE_STRESS_PCT
 #define HET_GPU_PRE_STRESS_PCT 65      /* % of iterations */
@@ -56,8 +56,7 @@
 #endif
 
 #ifndef HET_SEED
-#define HET_SEED 1        /* used only when no entropy draw is available
-                             [GPUHarbor23 sec 3.4] */
+#define HET_SEED 1        /* used only when no entropy draw is available */
 #endif
 #ifndef HET_GPU_STRESS_BLOCKS
 #define HET_GPU_STRESS_BLOCKS (-1)     /* -1 = auto: fill the co-resident grid */
@@ -95,7 +94,7 @@ __device__ static inline void het_idle(void) {
 #endif
 }
 
-/* Adapted from [CudaLitmus] functions.cu:19 [Kirkham20 sec 3.1]; plain, so it
+/* Adapted from [CudaLitmus functions.cu:19] [Kirkham20]; plain, so it
  * adds no ordering edge.  `pattern' must be a runtime value, or nvcc hoists the
  * traffic; nvcc 12.9 for sm_121 merges the ld;ld pair into one load. */
 __device__ static void het_do_stress(uint32_t* scratchpad,
@@ -127,7 +126,7 @@ __device__ static void het_do_stress(uint32_t* scratchpad,
   het_scratch_max(&tally[HET_TALLY_STRESS_ROUNDS], rounds);
 }
 
-/* Adapted from [CudaLitmus] runner.cu:130; unlike it, regions are deduplicated. */
+/* Adapted from [CudaLitmus runner.cu:130]. */
 #if HET_GPU_SPREAD < 1
 #error "HET_GPU_SPREAD must be >= 1 (the spread m)"
 #endif

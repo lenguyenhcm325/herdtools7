@@ -59,7 +59,6 @@ let dump_launch_geometry dialect identity ch =
   int _grid = _testBlocks + _noiseBlocks + _stressBlocks;
   if (_grid > _maxGrid) { fprintf(stderr, "grid %d exceeds co-resident cap %d\n", _grid, _maxGrid); return 2; }
 |} ;
-  (* [Alglave15 sec 4.3.1 Tab. 6] *)
   s {|  if (HET_GPU_MEM_STRESS_PCT > 0 && _stressBlocks == 0)
     fprintf(stderr, "HetLitmus WARNING: the mem-stress population is EMPTY (test=%d + noise=%d fills the co-resident cap %d).  HET_GPU_MEM_STRESS_PCT=%d asks for scratchpad stress and NO block will do any.\n",
             _testBlocks, _noiseBlocks, _maxGrid, (int)HET_GPU_MEM_STRESS_PCT);

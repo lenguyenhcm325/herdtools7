@@ -1,13 +1,14 @@
-/* Fine-grained hipMallocManaged, the default, is host-device coherent while
-   kernels run [HipRuntimeApi "hipMemAdviseSetCoarseGrain"]. */
+/* hipMallocManaged memory is fine-grained, so it is host-device coherent while
+   kernels run,
+   https://rocm.docs.amd.com/projects/HIP/en/docs-7.2.4/how-to/hip_runtime_api/memory_management/coherence_control.html */
 #define HET_HIP_ALLOC_MANAGED 1
 static int _het_hip_attr(hipDeviceAttribute_t _a){
   int _v = 0;
   (void)hipDeviceGetAttribute(&_v, _a, 0);
   return _v;
 }
-/* MI300A and MI300X both report gfx942; only this attribute tells them apart
-   [HipRuntimeApi "hipDeviceAttributeIntegrated"]. */
+/* MI300A and MI300X both report gfx942; only this attribute tells them apart,
+   https://github.com/ROCm/hip/blob/rocm-7.2.4/include/hip/hip_runtime_api.h#L457 */
 static const char* _het_amd_part_class(int _integrated){
   return _integrated ? "APU(integrated)" : "DISCRETE(not-integrated)";
 }
@@ -38,8 +39,9 @@ static int _het_alloc_mode(void){
          (_v != NULL && *_v != '\0') ? _v : "unset",
          _het_amd_part_class(_integrated), _integrated, _managed, _cma, _pg);
   fflush(stdout);
-  /* Without HMM, hipMallocManaged silently becomes pinned host memory off the
-     coherent path [HipRuntimeApi "hipMallocManaged"]. */
+  /* Without HMM, hipMallocManaged silently returns pinned host memory, so a run
+     reporting mode=managed would test a different allocation,
+     https://github.com/ROCm/hip/blob/rocm-7.2.4/include/hip/hip_runtime_api.h#L3864 */
   if (!_managed) {
     fprintf(stderr,
             "HetLitmus FATAL: hipDeviceAttributeManagedMemory=0: hipMallocManaged "

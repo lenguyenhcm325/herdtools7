@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tune the stress knobs: a seeded random search on one target machine.
 
-Method from [CudaLitmus]'s tune.sh.
+Adapted from [CudaLitmus tune.sh].
 Exit: 0 = the pass ran; 2 = configuration/environment error.
 """
 
@@ -46,7 +46,7 @@ _M64 = (1 << 64) - 1
 
 
 def het_draw(seed, who, k):
-    """splitmix64 [Vigna15]."""
+    """splitmix64, https://prng.di.unimi.it/splitmix64.c (public domain)."""
     z = ((((seed & 0xffffffff) << 32) | (who & 0xffffffff))
          + k * 0x9E3779B97F4A7C15) & _M64
     z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _M64
@@ -108,7 +108,7 @@ def draw_knobs(seed, i, env, attempt):
         "HET_CPU_WORDS_PER_REGION": CPU_WORDS_PER_REGION_SET[d(28) % len(CPU_WORDS_PER_REGION_SET)],
         "HET_CPU_STRESS_PATTERN": d(30) % 4,
         "HET_CPU_PRELOAD_PCT": d(32) % 101,
-        # [CudaLitmus] derivation
+        # [CudaLitmus tune.sh:47]
         "HET_GPU_SCRATCH_WORDS": 32 * line * targets,
     }
     return k

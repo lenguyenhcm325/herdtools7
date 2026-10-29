@@ -31,7 +31,7 @@ typedef struct het_obs_record {
   uint64_t rdv_cap_cpu, rdv_cap_gpu;
   uint32_t cap_cpu, cap_gpu;
   int cap_calibrated;
-  /* 0 = one outcome vector throughout [Srivastava24 sec 4.1] */
+  /* 0 = every scored iteration read back the same outcome vector */
   int outcomes_vary;
   uint64_t stress_truncated;
   uint64_t gpu_stress_rounds;
@@ -164,7 +164,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
 }
 
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
-  if (cv & HET_CV_UNSTRESSED)   /* [Kirkham20 sec 6.2 Tab.10] */
+  if (cv & HET_CV_UNSTRESSED)
     fprintf(_ch, "  CAVEAT: no stress was requested; an unstressed null is "
                  "weak evidence.\n");
   if (cv & HET_CV_ONE_OUTCOME)
@@ -275,7 +275,8 @@ typedef struct het_stats {
   uint64_t N, iters_scored, iters_discarded;
 } het_stats_t;
 
-/* The decode guard [Srivastava24 sec 4.1]. */
+/* Catches the failure in [Srivastava24], where every iteration read back the
+   same value. */
 static int het_run_degenerate(const het_obs_record *r) {
   return !r->rdv_valid || (r->iters_scored == 0) || !r->outcomes_vary;
 }

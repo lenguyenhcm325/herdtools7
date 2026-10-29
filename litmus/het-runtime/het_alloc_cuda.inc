@@ -1,5 +1,6 @@
-/* Each mode is system-scope atomic only under a condition of
-   [CudaGuide "Atomicity"], so every guard below is fatal and none falls back. */
+/* Each mode is system-scope atomic only under a condition of CUDA Programming
+   Guide 5.7.3, so every guard below is fatal and none falls back.
+   https://docs.nvidia.com/cuda/archive/13.4.2/cuda-programming-guide/05-appendices/cuda-cpp-memory-model.html#atomicity */
 static int _shared_pageable(void){
   int _p = 0;
   (void)cudaDeviceGetAttribute(&_p, cudaDevAttrPageableMemoryAccess, 0);
@@ -25,8 +26,9 @@ static int _het_alloc_mode(void){
   if (_mode >= 0) return _mode;
   _v = getenv("HET_ALLOC");
   _pg  = _shared_pageable();
-  /* 1 = hardware, 0 = software CPU/GPU coherence: both take the malloc branch
-     and are NOT the same experiment [CudaGuide "Unified Memory Paradigms"] */
+  /* 1 = hardware, 0 = software CPU/GPU coherence; both take the malloc branch
+     and are NOT the same experiment.
+     https://docs.nvidia.com/cuda/archive/13.4.2/cuda-programming-guide/02-basics/understanding-memory.html#unified-memory-paradigms */
   _ht  = _het_dev_attr(cudaDevAttrPageableMemoryAccessUsesHostPageTables);
   _cma = _het_dev_attr(cudaDevAttrConcurrentManagedAccess);
   if (_v == NULL || *_v == '\0' || strcmp(_v, "auto") == 0) {
@@ -56,7 +58,7 @@ static int _het_alloc_mode(void){
             "pinned.\n");
     exit(2);
   }
-  /* [CudaGuide "Coherency and Concurrency"] */
+  /* https://docs.nvidia.com/cuda/archive/13.4.2/cuda-programming-guide/04-special-topics/unified-memory.html#coherency-and-concurrency */
   if (_mode == HET_ALLOC_MANAGED && !_cma) {
     fprintf(stderr,
             "HetLitmus FATAL: managed mode but cudaDevAttrConcurrentManagedAccess=0: "
@@ -99,8 +101,8 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
       exit(2);
     }
   } else {
-    /* [CudaGuide "cudaMallocHost and cudaHostAlloc"]; free with cudaFreeHost,
-       never free(). */
+    /* Free with cudaFreeHost, never free().
+       https://docs.nvidia.com/cuda/archive/13.4.2/cuda-programming-guide/02-basics/understanding-memory.html#cudamallochost-and-cudahostalloc */
     cudaError_t _e = cudaHostAlloc(_pp, _bytes,
                                    cudaHostAllocMapped | cudaHostAllocPortable);
     if (_e != cudaSuccess || *_pp == NULL) {

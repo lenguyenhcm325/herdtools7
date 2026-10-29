@@ -17,8 +17,6 @@
 open Printf
 include GpuLang
 
-(* From [HipAtomicHeader]. *)
-
 let hip_memory_order = function
   | "relaxed" -> "__ATOMIC_RELAXED"
   | "acquire" -> "__ATOMIC_ACQUIRE"
@@ -33,12 +31,10 @@ let hip_scope = function
   | "sys"     -> "__HIP_MEMORY_SCOPE_SYSTEM"
   | s -> Warn.user_error "HipLang: unknown scope %S" s
 
-(* From [D75917]. *)
 let hip_fence_scope = function
   | "cta"     -> "workgroup"
   | "gpu"     -> "agent"
-  (* `sys' is the unnamed default sync scope; naming one here would NARROW it
-     [AMDGPUUsage "Memory Scopes"]. *)
+  (* `sys' is the unnamed default sync scope; naming one here would NARROW it. *)
   | "sys"     -> ""
   | s -> Warn.user_error "HipLang: unknown fence scope %S" s
 

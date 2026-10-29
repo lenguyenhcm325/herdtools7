@@ -20,7 +20,6 @@ import ptxcheck as ptx
 CompletenessError = ptx.CompletenessError
 
 
-# [HipAtomicHeader] [D75917]
 HIP_ORDER = {
     "relaxed": "__ATOMIC_RELAXED",
     "acquire": "__ATOMIC_ACQUIRE",
@@ -29,14 +28,12 @@ HIP_ORDER = {
     "sc":      "__ATOMIC_SEQ_CST",
 }
 
-# [HipAtomicHeader]
 HIP_SCOPE = {
     "cta": "__HIP_MEMORY_SCOPE_WORKGROUP",
     "gpu": "__HIP_MEMORY_SCOPE_AGENT",
     "sys": "__HIP_MEMORY_SCOPE_SYSTEM",
 }
 
-# [D75917] [AMDGPUUsage "Memory Scopes"]
 HIP_FENCE_SCOPE = {
     "cta": "workgroup",
     "gpu": "agent",

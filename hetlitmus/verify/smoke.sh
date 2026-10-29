@@ -51,7 +51,7 @@ case "$cmd" in
   all)
     printf '===== HetLitmus compile-smoke (%d reps; nvcc+hipcc+clang, NO GPU) =====\n' "$NREPS"
     smoke_het_hip MP-cg-sys-plain.acq-x86_64 "the AMD render's acquire atomics through hipcc (hipcc -c, gfx942)"
-    smoke_het     MP-cg-sys-sy.facq     "CPU dmb sy + inline fence.acquire.sys, sm_90 [CCCL]"
+    smoke_het     MP-cg-sys-sy.facq     "CPU dmb sy + inline fence.acquire.sys, sm_90"
     smoke_het     S-gc-sys-ra.frel      "CPU STLR/LDAPR + inline fence.release.sys"
     smoke_het     MP-cg-sys-st.fsc      "CPU dmb st + fence.sc.sys"
     smoke_het     MP-gc-sys-ld.fsc      "CPU dmb ld + fence.sc.sys on the gc cut"

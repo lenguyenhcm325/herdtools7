@@ -63,8 +63,7 @@ extern "C" {
   s (Printf.sprintf "#define NUMBER_OF_RUN %d\n" geometry.ge_runs) ;
   s "\n" ;
   let lanes = max 1 geometry.ge_bdim in
-  (* The floor is the block width het_stress.h's knobs were tuned jointly with
-     [CudaLitmus params/stress_params.txt]. *)
+  (* 128 is workgroupSize in [CudaLitmus params/stress_params.txt]. *)
   s (Printf.sprintf "#ifndef HET_BLOCK_DIM\n#define HET_BLOCK_DIM %d\n#endif\n"
        (max 128 lanes)) ;
   s (Printf.sprintf
@@ -126,7 +125,6 @@ let dump_test_lane dialect gp ch =
   }
 |}
 
-(* From [CudaLitmus litmus.cuh:344]. *)
 let dump_stress_workgroups ch =
   let s = output_string ch in
   s {|  if (blockIdx.x >= HET_TEST_BLOCKS) {

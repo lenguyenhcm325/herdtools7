@@ -286,7 +286,6 @@ def hip_allocator(tmp, d):
         ("auto", {}, 0, managed, ()),
         ("managed", {}, 0, managed, ()),
         ("malloc", {}, 2, (), ("FATAL", "not a shared-memory mode")),
-        # [HipRuntimeApi "hipMallocManaged"]
         (None, dict(managed=0), 2, (), ("hipDeviceAttributeManagedMemory=0",)),
         (None, dict(cma=0), 2, (), ("hipDeviceAttributeConcurrentManagedAccess=0",)),
         (None, dict(integrated=0), 0, ("amd_part_class=DISCRETE(not-integrated)",),

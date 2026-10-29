@@ -22,7 +22,9 @@ GPU_ORDER = {"relaxed": "relaxed", "acquire": "acquire", "release": "release",
              "acqrel": "acq_rel", "sc": "sc"}
 GPU_SCOPE = ("cta", "gpu", "sys")
 GPU_KIND = {"w": "st", "r": "ld", "f": "fence"}
-# An sc access is the scope's fence.sc, then the access [CCCL cuda_ptx_generated.h].
+# An sc access is the scope's fence.sc, then the access: CCCL 2.8.2
+# cuda_ptx_generated.h L97-L104 (load), L857-L865 (store),
+# https://github.com/NVIDIA/cccl/blob/v2.8.2/libcudacxx/include/cuda/std/__atomic/functions/cuda_ptx_generated.h
 SC_ACCESS = {"st": "relaxed", "ld": "acquire"}
 CPU_MEM = ("str", "ldr", "stlr", "ldar", "ldapr", "dmb")
 DMB_OPTION = ("sy", "st", "ld")

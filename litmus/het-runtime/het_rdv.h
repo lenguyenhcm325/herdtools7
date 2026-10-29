@@ -38,8 +38,8 @@
 #define HET_RELEASE_JITTER_SPINS 64
 #endif
 
-/* A host spin that never enters the runtime can starve the grid it waits for
-   [CudaGuide "CUDA C++ Execution model"]. */
+/* A host spin that never enters the runtime can starve the grid it waits for.
+   https://docs.nvidia.com/cuda/archive/13.4.2/cuda-programming-guide/05-appendices/cuda-cpp-execution-model.html#cuda-c-execution-model */
 typedef void (*het_poke_fn)(void);
 
 #ifndef HET_RDV_POKE_EVERY
@@ -50,7 +50,7 @@ typedef void (*het_poke_fn)(void);
 #endif
 
 /* Relaxed on purpose: on Hopper an acquire appears to self-invalidate the L1
-   [Bagchi26 sec 5.3]. */
+   [Bagchi26]. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
 __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
                                             uint32_t _cap) {
@@ -59,8 +59,8 @@ __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
   uint32_t _i = 0;
   while (_v < _target && _i < _cap) {
     _i++;
-    /* Adapted from [AMDGPUIntrin] __gpu_thread_suspend, which sleeps 2;
-       benefit unmeasured. */
+    /* Adapted from __gpu_thread_suspend, which sleeps 2; benefit unmeasured.
+       https://github.com/llvm/llvm-project/blob/ea4d814a136bbc30c09c631cb00cdddcd4a58326/clang/lib/Headers/amdgpuintrin.h#L155-L157 */
     __builtin_amdgcn_s_sleep(1);
     _v = __hip_atomic_load(_ctr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);
   }

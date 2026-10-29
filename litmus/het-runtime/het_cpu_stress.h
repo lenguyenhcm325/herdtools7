@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 /* Untuned defaults: tune them on the machine under test, since settings tuned
- * on one chip may not suit another [Alglave11 sec 4] [Kirkham20 sec 6.4]. */
+ * on one chip may not suit another [Alglave11] [Kirkham20]. */
 #ifndef HET_CPU_STRESS_THREADS
 #define HET_CPU_STRESS_THREADS (-1)  /* -1 = auto: every spare core */
 #endif
@@ -19,13 +19,13 @@ extern "C" {
 #define HET_CPU_SCRATCH_WORDS 262144   /* uint64 words */
 #endif
 #ifndef HET_CPU_SPREAD
-#define HET_CPU_SPREAD 8          /* spread m [Sorensen16 sec 3.4] */
+#define HET_CPU_SPREAD 8  /* regions per stress thread, adapted from spread m [Sorensen16] */
 #endif
 #ifndef HET_CPU_WORDS_PER_REGION
 #define HET_CPU_WORDS_PER_REGION 8  /* 8 x 8 B = one 64 B line */
 #endif
 #ifndef HET_CPU_STRESS_PATTERN
-#define HET_CPU_STRESS_PATTERN 0  /* sigma: 0=st;st 1=st;ld 2=ld;st 3=ld;ld [Sorensen16 sec 3.3] */
+#define HET_CPU_STRESS_PATTERN 0  /* 0=st;st 1=st;ld 2=ld;st 3=ld;ld [Kirkham20] */
 #endif
 #ifndef HET_CPU_PRELOAD_PCT
 #define HET_CPU_PRELOAD_PCT 50    /* % of iterations */
@@ -42,7 +42,7 @@ extern "C" {
 
 /* Interconnect noise defaults to off: its effect is unmeasured. */
 #ifndef HET_NOISE_MB
-#define HET_NOISE_MB 8192         /* [Fusco24 sec III-C]; must exceed HET_LLC_MB */
+#define HET_NOISE_MB 8192         /* [Fusco24]; must exceed HET_LLC_MB */
 #endif
 #ifndef HET_CPU_NOISE_THREADS
 #define HET_CPU_NOISE_THREADS 0
@@ -57,7 +57,7 @@ extern "C" {
 #define HET_NOISE_STRIDE 1        /* in words */
 #endif
 
-/* The noise buffer must exceed the last-level cache [Fusco24 sec III-E.1];
+/* The noise buffer must exceed the last-level cache;
    the fallback is [Bagchi26 Table 1]'s Grace L3. */
 #ifndef HET_LLC_MB
 #define HET_LLC_MB 114
@@ -130,7 +130,7 @@ typedef struct het_cpu_noise_args {
   het_cpu_tally *tally;
 } het_cpu_noise_args;
 
-/* splitmix64 [Vigna15] */
+/* splitmix64, https://prng.di.unimi.it/splitmix64.c (public domain) */
 #if defined(__CUDACC__) || defined(__HIP_PLATFORM_AMD__) || \
     defined(__HIP_DEVICE_COMPILE__)
 #define HET_DRAW_ATTR __host__ __device__ static inline
@@ -234,7 +234,6 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t seed,
 #else
   uint32_t n = 0u;
   for (int i = 0; i < nvars; i++) {
-    /* [CudaLitmus runner.cu:106] */
     if ((int)(het_draw(seed, who, k0 + 2u*(uint64_t)i) % 100u) >= pct) continue;
     /* litmus7's RandomPL: flush / touch / touch-for-store, per variable */
     switch (het_draw(seed, who, k0 + 2u*(uint64_t)i + 1u) % 3u) {
@@ -248,8 +247,8 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t seed,
 #endif
 }
 
-/* From [Sorensen16 sec 1].  `pattern' stays a runtime field and the accesses
- * volatile, or -O2 deletes them. */
+/* Adapted from [Sorensen16], with CPU threads.  `pattern' stays a runtime
+ * field and the accesses volatile, or -O2 deletes them. */
 void *het_cpu_stress(void *_a) {
   het_cpu_stress_args *a = (het_cpu_stress_args *)_a;
   het_cpu_affinity(a->core, a->tally);
@@ -259,8 +258,7 @@ void *het_cpu_stress(void *_a) {
   uint32_t i = 0;
   while (__atomic_load_n(a->go, __ATOMIC_RELAXED)) {
     for (uint32_t r = 0; r < a->nidx; r++) {
-      /* Indirection through the shuffled index [Alglave11 sec 3];
-       regions one line apart [Sorensen16 sec 3.4]. */
+      /* Indirection through the shuffled index, adapted from [Alglave11]. */
       volatile uint64_t *l =
         a->scratch + (size_t)a->idx[r] * (size_t)a->words_per_region;
       switch (a->pattern) {
@@ -280,7 +278,7 @@ void *het_cpu_stress(void *_a) {
   return NULL;
 }
 
-/* Slices as in [Fusco24 sec III-B.2]. */
+/* Slices as in [Fusco24]. */
 void *het_cpu_noise(void *_a) {
   het_cpu_noise_args *a = (het_cpu_noise_args *)_a;
   het_cpu_affinity(a->core, a->tally);

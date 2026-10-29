@@ -17,8 +17,6 @@
 open Printf
 include GpuLang
 
-(* From [CCCL]. *)
-
 let memory_order = function
   | "relaxed" -> "cuda::memory_order_relaxed"
   | "acquire" -> "cuda::memory_order_acquire"
@@ -34,7 +32,8 @@ let thread_scope = function
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
 
 (* One inline PTX fence per annotated order: cuda::atomic_thread_fence collapses
-   acquire, release and acq_rel into fence.acq_rel [CCCL]. *)
+   acquire, release and acq_rel into fence.acq_rel,
+   https://github.com/NVIDIA/cccl/blob/v2.8.2/libcudacxx/include/cuda/std/__atomic/functions/cuda_ptx_generated.h#L69-L81 *)
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
   | "release" -> "release"
@@ -51,8 +50,10 @@ let one_sided ord = ord = "acquire" || ord = "release"
 let fence_min_arch ord =
   if one_sided ord then "requires sm_90" else "sm_70+"
 
-(* The sm_90 floor of a one-sided fence [PtxISA "membar/fence"] is enforced
-   here: ptxas assembles it for any sm_70+ target and the device faults at launch. *)
+(* The sm_90 floor of a one-sided fence is enforced here: ptxas assembles it for
+   any sm_70+ target and the device faults at launch.  The floor is in the
+   Target ISA Notes of PTX ISA 8.8 sec 9.7.13.4,
+   https://docs.nvidia.com/cuda/archive/12.9.0/parallel-thread-execution/index.html#parallel-synchronization-and-communication-instructions-membar *)
 let fence_floor_guard instrs =
   let needs_sm90 = function
     | BellBase.Pfence (BellBase.Fence (annots, _)) ->
